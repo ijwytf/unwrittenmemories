@@ -10,10 +10,338 @@
       margin: 0;
       overflow: hidden;
       background: black;
+      color: white;
     }
 
     canvas {
       display: block;
+      transition: opacity 700ms ease;
+    }
+
+    #credits-toggle {
+      position: fixed;
+      top: max(12px, env(safe-area-inset-top));
+      left: max(12px, env(safe-area-inset-left));
+      z-index: 20;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #credits-toggle::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: white;
+      transform: translate(-50%, -50%);
+      transition: background-color 700ms ease, transform 200ms ease;
+    }
+
+    #credits-toggle:active::before {
+      transform: translate(-50%, -50%) scale(0.82);
+    }
+
+    #credits-toggle:focus-visible {
+      outline: 1px solid currentColor;
+      outline-offset: -7px;
+      border-radius: 50%;
+    }
+
+    #credits {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      box-sizing: border-box;
+      padding:
+        max(88px, calc(env(safe-area-inset-top) + 72px))
+        max(32px, calc(env(safe-area-inset-right) + 6vw))
+        max(72px, calc(env(safe-area-inset-bottom) + 56px))
+        max(32px, calc(env(safe-area-inset-left) + 6vw));
+      background: white;
+      color: black;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 700ms ease, visibility 0s linear 700ms;
+    }
+
+    #credits-content {
+      width: min(100%, 960px);
+      font-family: Arial, Helvetica, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      font-size: clamp(15px, 1.25vw, 20px);
+      font-weight: 400;
+      line-height: 1.7;
+      letter-spacing: -0.01em;
+      overflow-wrap: anywhere;
+      word-break: keep-all;
+      transition: transform 650ms cubic-bezier(0.65, 0, 0.35, 1), opacity 450ms ease;
+      will-change: transform;
+    }
+
+    .credits-group,
+    .credits-info {
+      margin: 0;
+    }
+
+    .credits-group + .credits-group {
+      margin-top: clamp(34px, 5vh, 64px);
+    }
+
+    .credits-line {
+      margin: 0;
+    }
+
+    .credits-source {
+      margin-left: clamp(18px, 2.5vw, 36px);
+    }
+
+    .credits-info {
+      margin-top: clamp(72px, 12vh, 150px);
+    }
+
+    .credits-info .credits-line + .credits-line {
+      margin-top: 0.35em;
+    }
+
+    .credits-arrow {
+      position: fixed;
+      top: 50%;
+      z-index: 14;
+      width: 48px;
+      height: 48px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: black;
+      font: 300 28px/1 Arial, Helvetica, sans-serif;
+      cursor: pointer;
+      touch-action: manipulation;
+      transform: translateY(-50%);
+      transition: opacity 250ms ease, transform 650ms cubic-bezier(0.65, 0, 0.35, 1);
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .credits-arrow:focus-visible,
+    .gallery-region:focus-visible,
+    .gallery-control:focus-visible {
+      outline: 1px solid currentColor;
+      outline-offset: 3px;
+    }
+
+    #gallery-open {
+      right: max(12px, env(safe-area-inset-right));
+    }
+
+    #gallery-close {
+      left: max(12px, env(safe-area-inset-left));
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(30px, -50%);
+    }
+
+    #gallery-panel {
+      position: fixed;
+      inset: 0;
+      z-index: 12;
+      box-sizing: border-box;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding:
+        max(72px, calc(env(safe-area-inset-top) + 58px))
+        max(54px, calc(env(safe-area-inset-right) + 6vw))
+        max(40px, calc(env(safe-area-inset-bottom) + 28px))
+        max(54px, calc(env(safe-area-inset-left) + 6vw));
+      background: white;
+      color: black;
+      transform: translateX(100%);
+      transition: transform 650ms cubic-bezier(0.65, 0, 0.35, 1);
+      will-change: transform;
+    }
+
+    .gallery-layout {
+      width: 100%;
+      min-height: calc(100dvh - max(112px, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom) + 86px)));
+      display: grid;
+      grid-template-rows: auto minmax(240px, 1fr) auto;
+      gap: clamp(18px, 3vh, 32px);
+      font-family: Arial, Helvetica, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    }
+
+    #gallery-regions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px clamp(22px, 4vw, 56px);
+    }
+
+    .gallery-region,
+    .gallery-control {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: black;
+      font: inherit;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .gallery-region {
+      position: relative;
+      font-size: clamp(14px, 1.2vw, 18px);
+    }
+
+    .gallery-region::after {
+      content: '';
+      position: absolute;
+      right: 5px;
+      bottom: 7px;
+      left: 5px;
+      height: 1px;
+      background: currentColor;
+      transform: scaleX(0);
+      transition: transform 200ms ease;
+    }
+
+    .gallery-region[aria-selected="true"] {
+      font-weight: 600;
+    }
+
+    .gallery-region[aria-selected="true"]::after {
+      transform: scaleX(1);
+    }
+
+    #gallery-figure {
+      min-width: 0;
+      min-height: 0;
+      margin: 0;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      gap: 14px;
+    }
+
+    #gallery-media {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: pan-y;
+    }
+
+    #gallery-image {
+      display: block;
+      max-width: 100%;
+      max-height: min(68dvh, 900px);
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      opacity: 0;
+      user-select: none;
+      -webkit-user-drag: none;
+      transition: opacity 220ms ease;
+    }
+
+    #gallery-image.is-loaded {
+      opacity: 1;
+    }
+
+    #gallery-caption {
+      min-height: 1.7em;
+      text-align: center;
+      font-size: clamp(13px, 1vw, 16px);
+      line-height: 1.7;
+    }
+
+    #gallery-meta[hidden] {
+      display: none;
+    }
+
+    #gallery-title,
+    #gallery-description {
+      margin: 0;
+    }
+
+    #gallery-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(26px, 5vw, 64px);
+    }
+
+    .gallery-control {
+      font-size: 25px;
+      line-height: 1;
+    }
+
+    #gallery-counter {
+      min-width: 4.5em;
+      text-align: center;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    body.gallery-open #credits {
+      overflow: hidden;
+    }
+
+    body.gallery-open #credits-content {
+      opacity: 0;
+      transform: translateX(-100vw);
+    }
+
+    body.gallery-open #gallery-panel {
+      transform: translateX(0);
+    }
+
+    body.gallery-open #gallery-open {
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-30px, -50%);
+    }
+
+    body.gallery-open #gallery-close {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(0, -50%);
+    }
+
+    body.credits-open #credits {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transition-delay: 0s;
+    }
+
+    body.credits-open #credits-toggle {
+      color: black;
+    }
+
+    body.credits-open #credits-toggle::before {
+      background: black;
+    }
+
+    body.credits-open canvas,
+    body.credits-open #microphone-controls,
+    body.credits-open > [role="status"] {
+      opacity: 0;
+      pointer-events: none;
     }
 
     #microphone-controls {
@@ -28,6 +356,7 @@
       background: #000c;
       color: #ddd;
       font: 12px/1.5 sans-serif;
+      transition: opacity 300ms ease;
     }
 
     #microphone-controls button {
@@ -49,6 +378,64 @@
     }
 
     #microphone-message { margin: 8px 0 0; }
+
+    @media (max-width: 600px) {
+      #credits {
+        padding:
+          max(76px, calc(env(safe-area-inset-top) + 64px))
+          max(22px, calc(env(safe-area-inset-right) + 5vw))
+          max(56px, calc(env(safe-area-inset-bottom) + 40px))
+          max(22px, calc(env(safe-area-inset-left) + 5vw));
+      }
+
+      #credits-content {
+        font-size: clamp(14px, 4vw, 17px);
+        line-height: 1.65;
+      }
+
+      .credits-group + .credits-group {
+        margin-top: 32px;
+      }
+
+      .credits-info {
+        margin-top: 72px;
+      }
+
+      #gallery-panel {
+        padding:
+          max(68px, calc(env(safe-area-inset-top) + 56px))
+          max(22px, calc(env(safe-area-inset-right) + 5vw))
+          max(64px, calc(env(safe-area-inset-bottom) + 48px))
+          max(22px, calc(env(safe-area-inset-left) + 5vw));
+      }
+
+      .gallery-layout {
+        min-height: calc(100dvh - 132px);
+        grid-template-rows: auto minmax(180px, 1fr) auto;
+        gap: 14px;
+      }
+
+      #gallery-regions {
+        justify-content: space-between;
+        gap: 4px;
+      }
+
+      #gallery-image {
+        max-height: calc(100dvh - 230px);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      canvas,
+      #credits,
+      #credits-toggle::before,
+      #credits-content,
+      #gallery-panel,
+      .credits-arrow,
+      #gallery-image {
+        transition-duration: 1ms;
+      }
+    }
   </style>
 
   <script type="importmap">
@@ -62,6 +449,68 @@
 </head>
 
 <body>
+  <button
+    id="credits-toggle"
+    type="button"
+    aria-label="Credits 열기"
+    aria-controls="credits"
+    aria-expanded="false"
+  ></button>
+
+  <aside id="credits" aria-hidden="true" inert>
+    <div id="credits-content">
+      <div class="credits-group">
+        <p class="credits-line">"Big tree"</p>
+        <p class="credits-line credits-source">by Simon Laisné(Sketchfab)</p>
+      </div>
+
+      <div class="credits-group">
+        <p class="credits-line">"국가민속문화유산 보은 최감찰댁 사랑채"</p>
+        <p class="credits-line">"국가등록문화유산 청주 문화동 일양 절충식 가옥"</p>
+        <p class="credits-line">"국가등록문화유산 괴산중학교 구 본관"</p>
+        <p class="credits-line">"국가등록문화유산 괴산군수 관사"</p>
+        <p class="credits-line">"국가민속문화유산 단양 조덕수 고택"</p>
+        <p class="credits-line">"국가등록문화유산 제천 엽연초생산조합 구 사옥"</p>
+        <p class="credits-line">"보물 옥천 용암사 동서 삼층석탑"</p>
+        <p class="credits-line credits-source">by 국가유산청</p>
+      </div>
+
+      <div class="credits-info">
+        <p class="credits-line">※ 이 웹사이트는 2026 국가유산청 K-무형유산 지식자원 기초조사의 일환으로 제작되었습니다.</p>
+        <p class="credits-line">ⓒ 2026 K-무형유산 지식자원 기초조사 - 충북대학교 팀</p>
+      </div>
+    </div>
+
+    <button id="gallery-open" class="credits-arrow" type="button" aria-label="Gallery 열기">→</button>
+
+    <section id="gallery-panel" aria-label="Gallery" aria-hidden="true" inert>
+      <div class="gallery-layout">
+        <nav id="gallery-regions" aria-label="지역 선택"></nav>
+
+        <figure id="gallery-figure">
+          <div id="gallery-media">
+            <img id="gallery-image" alt="" loading="lazy" decoding="async">
+          </div>
+          <figcaption id="gallery-caption">
+            <div id="gallery-counter" aria-live="polite"></div>
+            <div id="gallery-meta" hidden>
+              <p id="gallery-title"></p>
+              <p id="gallery-description"></p>
+            </div>
+          </figcaption>
+        </figure>
+
+        <div id="gallery-controls" aria-label="사진 이동">
+          <button id="gallery-previous" class="gallery-control" type="button" aria-label="이전 사진">←</button>
+          <button id="gallery-next" class="gallery-control" type="button" aria-label="다음 사진">→</button>
+        </div>
+      </div>
+    </section>
+
+    <button id="gallery-close" class="credits-arrow" type="button" aria-label="Credits로 돌아가기">←</button>
+  </aside>
+
+  <script type="module" src="./credits.js"></script>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

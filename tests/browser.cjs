@@ -171,6 +171,15 @@ async function run() {
     console.log('Desktop pixel summaries', {beforePixels,afterPixels});
     assert.deepEqual(afterPixels,beforePixels,'desktop static rendering changed');
     await pc.page.screenshot({path:path.join(artifacts,'desktop-after.png')});
+    await pc.page.locator('#credits-toggle').click();
+    await pc.page.waitForTimeout(750);
+    await pc.page.screenshot({path:path.join(artifacts,'credits-desktop.png')});
+    await pc.page.locator('#gallery-open').click();
+    await pc.page.waitForFunction(()=>document.querySelector('#gallery-image').naturalWidth>0,null,{timeout:60000});
+    await pc.page.waitForTimeout(700);
+    await pc.page.screenshot({path:path.join(artifacts,'gallery-desktop.png')});
+    await pc.page.locator('#gallery-close').click();
+    await pc.page.locator('#credits-toggle').click();
     console.log('PASS desktop framing, transforms, sampled points, effects and resolution identical');
     await pc.page.evaluate(()=>{window.__check.resume();document.body.click();document.body.click();document.body.click()});
     await pc.page.waitForFunction(()=>window.__check.snapshot().audio.level>0.01);
@@ -198,6 +207,66 @@ async function run() {
     assert.deepEqual(mobileState.passes,oldState.passes);
     assert.equal(mobileState.hiddenVertices,0);
     assert.ok(mobileState.canvas[0]*mobileState.canvas[1]<=800000);
+    const galleryRequests=[];
+    m.on('request',request=>{
+      if(request.url().includes('/images/gallery/')) galleryRequests.push(decodeURI(request.url()));
+    });
+    const creditsViewport=m.viewportSize();
+    await m.setViewportSize({width:390,height:400});
+    await m.locator('#credits-toggle').tap();
+    await m.waitForFunction(()=>document.body.classList.contains('credits-open'));
+    await m.waitForTimeout(750);
+    const creditsOpen=await m.evaluate(()=>({
+      expanded:document.querySelector('#credits-toggle').getAttribute('aria-expanded'),
+      hidden:document.querySelector('#credits').getAttribute('aria-hidden'),
+      inert:document.querySelector('#credits').inert,
+      background:getComputedStyle(document.querySelector('#credits')).backgroundColor,
+      text:getComputedStyle(document.querySelector('#credits')).color,
+      canvasOpacity:getComputedStyle(document.querySelector('canvas')).opacity,
+      scrollable:document.querySelector('#credits').scrollHeight>document.querySelector('#credits').clientHeight,
+      micRequests:window.__micRequests
+    }));
+    assert.deepEqual(creditsOpen,{
+      expanded:'true',hidden:'false',inert:false,background:'rgb(255, 255, 255)',
+      text:'rgb(0, 0, 0)',canvasOpacity:'0',scrollable:true,micRequests:0
+    });
+    await m.screenshot({path:path.join(artifacts,'credits-mobile.png'),fullPage:true});
+    await m.locator('#credits').tap({position:{x:20,y:300}});
+    assert.equal(await m.evaluate(()=>window.__micRequests),0,'credits input reached microphone handler');
+    assert.equal(galleryRequests.length,0,'gallery image loaded before gallery entry');
+    await m.locator('#gallery-open').tap();
+    await m.waitForFunction(()=>document.body.classList.contains('gallery-open'));
+    await m.waitForFunction(()=>{
+      const image=document.querySelector('#gallery-image');
+      return image.complete && image.naturalWidth>0;
+    },null,{timeout:60000});
+    assert.deepEqual(galleryRequests,['http://127.0.0.1:'+new URL(m.url()).port+'/images/gallery/괴산/괴산 (1).webp']);
+    assert.equal(await m.locator('#gallery-counter').innerText(),'1 / 8');
+    assert.equal(await m.locator('.gallery-region[aria-selected="true"]').innerText(),'괴산');
+    await m.waitForTimeout(700);
+    await m.screenshot({path:path.join(artifacts,'gallery-mobile.png')});
+    await m.locator('#gallery-media').tap();
+    assert.equal(await m.evaluate(()=>window.__micRequests),0,'gallery input reached microphone handler');
+    await m.locator('#gallery-next').tap();
+    assert.equal(await m.locator('#gallery-counter').innerText(),'2 / 8');
+    await m.locator('.gallery-region',{hasText:'보은'}).tap();
+    assert.equal(await m.locator('#gallery-counter').innerText(),'1 / 9');
+    await m.evaluate(()=>{
+      const media=document.querySelector('#gallery-media');
+      const start=new Touch({identifier:1,target:media,clientX:60,clientY:200});
+      const end=new Touch({identifier:1,target:media,clientX:150,clientY:202});
+      media.dispatchEvent(new TouchEvent('touchstart',{changedTouches:[start],bubbles:true}));
+      media.dispatchEvent(new TouchEvent('touchend',{changedTouches:[end],bubbles:true}));
+    });
+    assert.equal(await m.locator('#gallery-counter').innerText(),'9 / 9');
+    await m.locator('#gallery-close').tap();
+    await m.waitForFunction(()=>!document.body.classList.contains('gallery-open'));
+    assert.equal(await m.locator('#credits-content').getAttribute('aria-hidden'),'false');
+    await m.locator('#credits-toggle').tap();
+    await m.waitForFunction(()=>!document.body.classList.contains('credits-open'));
+    assert.equal(await m.evaluate(()=>document.querySelector('#credits').inert),true);
+    await m.setViewportSize(creditsViewport);
+    console.log('PASS credits/gallery transitions, lazy loading, swipe and input isolation');
     const begin=await m.evaluate(()=>({frame:window.__check.snapshot().rendered,time:performance.now()}));
     await m.waitForTimeout(1200);
     const end=await m.evaluate(()=>({frame:window.__check.snapshot().rendered,time:performance.now()}));
