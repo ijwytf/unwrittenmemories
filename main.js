@@ -6,6 +6,22 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { selectQuality, pixelRatioFor, pointCountsFor } from './quality.js';
+
+const quality = selectQuality();
+const debug = new URLSearchParams(location.search).has('debug');
+const log = (...args) => { if (debug) console.log(...args); };
+const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
+
+const status = document.createElement('div');
+status.setAttribute('role', 'status');
+status.style.cssText = 'position:fixed;left:16px;bottom:16px;max-width:calc(100% - 32px);color:#ddd;font:13px/1.5 sans-serif;pointer-events:none;z-index:1';
+document.body.appendChild(status);
+function showStatus(message = '') {
+  status.textContent = message;
+  status.hidden = !message;
+}
+showStatus('작품을 불러오는 중입니다…');
 
 // ======================================================
 // Scene
@@ -32,11 +48,11 @@ const camera = new THREE.PerspectiveCamera(
 // ======================================================
 
 const renderer = new THREE.WebGLRenderer({
-  antialias: true
+  antialias: quality.antialias
 });
 
 renderer.setPixelRatio(
-  Math.min(window.devicePixelRatio, 1.1)
+  pixelRatioFor(quality, window.innerWidth, window.innerHeight, window.devicePixelRatio)
 );
 
 renderer.setSize(
@@ -55,7 +71,7 @@ const composer = new EffectComposer(renderer);
 const renderPass = new RenderPass(scene, camera);
 composer.addPass(renderPass);
 
-const afterimagePass = new AfterimagePass();
+let afterimagePass = new AfterimagePass();
 
 afterimagePass.uniforms['damp'].value = 0.90;
 
@@ -71,6 +87,12 @@ const bloomPass = new UnrealBloomPass(
   0.05    // threshold
 );
 
+// Keep the effect parameters; only reduce its internal buffers on mobile.
+const setBloomSize = bloomPass.setSize.bind(bloomPass);
+bloomPass.setSize = (width, height) => setBloomSize(
+  Math.max(1, Math.round(width * quality.bloomResolution)),
+  Math.max(1, Math.round(height * quality.bloomResolution))
+);
 composer.addPass(bloomPass);
 
 // ======================================================
@@ -146,73 +168,84 @@ let analyser = null;
 let audioData = null;
 let audioLevel = 0;
 let smoothAudioLevel = 0;
+let audioContext = null;
+let microphoneStream = null;
+let microphoneSource = null;
+let microphonePending = false;
+let microphoneEpoch = 0;
 
 async function startMicrophone() {
-
-    console.log('startMicrophone 실행됨');
-
+  if (microphonePending) return;
+  microphonePending = true;
+  const epoch = microphoneEpoch;
   try {
-
-    const stream =
-      await navigator.mediaDevices.getUserMedia({
-        audio: true
-      });
-
-    const audioContext =
-      new AudioContext();
-
-    const source =
-      audioContext.createMediaStreamSource(stream);
-
-    analyser =
-      audioContext.createAnalyser();
-
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('마이크는 HTTPS 또는 localhost에서 사용할 수 있습니다.');
+    }
+    // Create/resume synchronously with the gesture, before the permission prompt.
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    audioContext ??= new AudioContextClass();
+    const resumed = audioContext.resume();
+    if (analyser && microphoneStream?.active) {
+      await resumed;
+      showStatus();
+      return;
+    }
+    await resumed;
+    if (epoch !== microphoneEpoch) return;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (epoch !== microphoneEpoch) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+    microphoneStream = stream;
+    microphoneSource?.disconnect();
+    microphoneSource = audioContext.createMediaStreamSource(stream);
+    analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.8;
-
-    audioData =
-      new Uint8Array(
-        analyser.frequencyBinCount
-      );
-
-    source.connect(analyser);
-
-    console.log('Microphone connected');
-
+    audioData = new Uint8Array(analyser.frequencyBinCount);
+    microphoneSource.connect(analyser);
+    if (document.hidden) await audioContext.suspend();
+    showStatus();
+    log('Microphone connected');
   } catch (error) {
-
-    console.error(
-      'Microphone error:',
-      error
-    );
-
+    if (epoch !== microphoneEpoch) return;
+    stopMicrophone();
+    showStatus('마이크를 연결하지 못했습니다. 권한을 확인한 뒤 화면을 다시 눌러 주세요.');
+    console.error('Microphone error:', error);
+  } finally {
+    microphonePending = false;
   }
 }
 
-window.addEventListener('click', async () => {
+function stopMicrophone() {
+  microphoneEpoch++;
+  microphoneSource?.disconnect();
+  microphoneStream?.getTracks().forEach(track => track.stop());
+  if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
+  microphoneSource = microphoneStream = audioContext = analyser = audioData = null;
+  audioLevel = smoothAudioLevel = 0;
+}
 
-  console.log('화면 클릭 감지');
-
-  if (!analyser) {
-    console.log('마이크 연결 시도');
-    await startMicrophone();
-  }
-
-});
+window.addEventListener('click', startMicrophone);
 
 loader.load(
 
-  './ptc.glb',
+  quality.modelUrl,
 
-  (gltf) => {
+  async (gltf) => {
+    try {
 
     const model = gltf.scene;
 
     scene.add(model);
-    pointCloudGroup = model;
-    pointCloudGroup.position.x += 100;
+    // Publish only once conversion finishes, so async batches cannot rotate the
+    // model while world scales and the original framing are being calculated.
+    model.visible = false;
+    model.position.x += 100;
 
-    console.log('GLB loaded:', gltf);
+    log('GLB loaded:', quality.modelUrl);
 
 
     // ==================================================
@@ -229,8 +262,8 @@ loader.load(
       new THREE.Vector3()
     );
 
-    console.log('Model center:', center);
-    console.log('Model size:', size);
+    log('Model center:', center.toArray());
+    log('Model size:', size.toArray());
 
 
     // 모델 중심을 월드 원점으로 이동
@@ -254,10 +287,30 @@ loader.load(
     });
 
 
-    meshes.forEach((child) => {
+    const pointCounts = pointCountsFor(
+      meshes.map(mesh => mesh.geometry.attributes.position.count), quality
+    );
+    const oldGeometries = new Set();
+    const oldMaterials = new Set();
+    const oldTextures = new Set();
+    const retainedTextures = new Set();
+    // Keep hidden transform nodes for existing child hierarchies, but release
+    // their large geometry/material references after every sampler has finished.
+    const emptyGeometry = new THREE.BufferGeometry();
+    const emptyMaterial = new THREE.MeshBasicMaterial();
+
+    for (const [meshIndex, child] of meshes.entries()) {
 
   const originalGeometry = child.geometry;
   const originalMaterial = child.material;
+  oldGeometries.add(originalGeometry);
+  for (const material of (Array.isArray(originalMaterial) ? originalMaterial : [originalMaterial])) {
+    if (!material) continue;
+    oldMaterials.add(material);
+    for (const value of Object.values(material)) {
+      if (value?.isTexture) oldTextures.add(value);
+    }
+  }
 
   // ==================================================
 // Mesh 크기 계산
@@ -281,10 +334,7 @@ const meshMaxSize = Math.max(
 
   // 포인트 밀도
   // 숫자를 높일수록 점이 많아집니다.
-  const pointCount = Math.max(
-  100,
-  Math.floor(originalCount * 0.2)
-);
+  const pointCount = pointCounts[meshIndex];
 
 
   // ==================================================
@@ -303,9 +353,6 @@ const meshMaxSize = Math.max(
   const position =
     new THREE.Vector3();
 
-  const normal =
-    new THREE.Vector3();
-
   const uv =
     new THREE.Vector2();
 
@@ -314,7 +361,7 @@ const meshMaxSize = Math.max(
 
     sampler.sample(
       position,
-      normal,
+      undefined,
       undefined,
       uv
     );
@@ -334,6 +381,8 @@ const meshMaxSize = Math.max(
     uvs[i * 2 + 1] =
       uv.y;
 
+    if ((i + 1) % quality.conversionBatchSize === 0) await yieldToBrowser();
+
   }
 
 
@@ -349,7 +398,7 @@ const meshMaxSize = Math.max(
     new THREE.BufferAttribute(
       positions,
       3
-    )
+    ).setUsage(THREE.DynamicDrawUsage)
   );
 
   pointGeometry.setAttribute(
@@ -390,6 +439,7 @@ const meshMaxSize = Math.max(
 
   }
 
+  if (texture) retainedTextures.add(texture);
 
   // ==================================================
   // Point Material
@@ -438,6 +488,9 @@ const averageWorldScale =
 
 points.userData.worldScale =
   Math.max(averageWorldScale, 0.000001);
+points.userData.scaleCompensation = THREE.MathUtils.clamp(
+  1 / points.userData.worldScale, 1, 1000
+);
 
     points.userData.meshSize =
   Math.max(meshMaxSize, 0.01);
@@ -445,6 +498,8 @@ points.userData.worldScale =
     // 각 점의 원래 위치 저장
 points.userData.originalPositions =
   positions.slice();
+pointGeometry.computeBoundingSphere();
+points.userData.baseRadius = pointGeometry.boundingSphere.radius;
 
 // Noise용 랜덤값 저장
 points.userData.randomOffsets =
@@ -472,11 +527,12 @@ for (let i = 0; i < pointCount; i++) {
 
   points.userData.scatterDirections[i * 3 + 2] =
     z;
+  if ((i + 1) % quality.conversionBatchSize === 0) await yieldToBrowser();
 }
 
 pointClouds.push(points);
 
-console.log(
+log(
   'PointCloud:',
   child.name,
   'original:', originalCount,
@@ -486,7 +542,7 @@ console.log(
   'visible:', child.visible
 );
 
-console.log(
+log(
   'TRANSFORM:',
   child.name,
   'position:',
@@ -524,7 +580,26 @@ console.log(
   // 원래 Mesh 숨기기
   child.visible = false;
 
-});
+    if (Number.isFinite(quality.conversionBatchSize)) await yieldToBrowser();
+    }
+
+    for (const child of meshes) {
+      child.geometry = emptyGeometry;
+      child.material = emptyMaterial;
+    }
+    oldGeometries.forEach(geometry => geometry.dispose());
+    oldMaterials.forEach(material => material.dispose());
+    const retainedImages = new Set([...retainedTextures].map(texture => texture.image));
+    const closedImages = new Set();
+    oldTextures.forEach(texture => {
+      if (retainedTextures.has(texture)) return;
+      texture.dispose();
+      const image = texture.image;
+      if (!retainedImages.has(image) && !closedImages.has(image)) {
+        image?.close?.();
+        closedImages.add(image);
+      }
+    });
 
 
     // ==================================================
@@ -561,10 +636,16 @@ console.log(
     );
 
 
-    console.log(
+    model.visible = true;
+    pointCloudGroup = model;
+    showStatus();
+    log(
       'Point Cloud conversion complete'
     );
-
+    } catch (error) {
+      showStatus('작품을 준비하지 못했습니다. 페이지를 새로고침해 주세요.');
+      console.error('Point Cloud conversion error:', error);
+    }
   },
 
 
@@ -578,7 +659,7 @@ console.log(
         progress.total *
         100;
 
-      console.log(
+      log(
         `Loading: ${percent.toFixed(1)}%`
       );
 
@@ -589,7 +670,7 @@ console.log(
 
   // Error
   (error) => {
-
+    showStatus('작품을 불러오지 못했습니다. 네트워크 연결을 확인하고 새로고침해 주세요.');
     console.error(
       'GLB load error:',
       error
@@ -605,20 +686,42 @@ console.log(
 // ======================================================
 
 let frameCount = 0;
+let animationId = null;
+let lastFrameTime = null;
+let lastPointUpdate = null;
+let renderSchedule = null;
+let resizePending = true;
+let contextLost = false;
+let renderedFrames = 0;
 
-function animate() {
+function animate(now) {
+  animationId = null;
+  if (document.hidden || contextLost) return;
+  animationId = requestAnimationFrame(animate);
+  if (resizePending) resizeViewport();
+  // No blank postprocessing work while the large model is still being prepared.
+  if (!pointCloudGroup) return;
 
-  requestAnimationFrame(animate);
+  const interval = 1000 / quality.maxFps;
+  if (renderSchedule !== null && now - renderSchedule < interval - 0.5) return;
+  renderSchedule = interval > 0 && renderSchedule !== null
+    ? renderSchedule + Math.max(1, Math.floor((now - renderSchedule + 0.5) / interval)) * interval
+    : now;
+  const delta = lastFrameTime === null ? 1 / 60 : Math.min((now - lastFrameTime) / 1000, 0.1);
+  lastFrameTime = now;
+  // Desktop preserves the existing per-frame behavior. Mobile's 30 FPS uses
+  // elapsed time to retain the feel of the original 60 FPS rotation and lag.
+  const frameScale = Number.isFinite(quality.maxFps) ? delta * 60 : 1;
 
   frameCount++;
 
-  const time = performance.now() * 0.001;
+  const time = now * 0.001;
   // ==============================================
   // Microphone volume
   // ==============================================
 
-  if (analyser && audioData) {
-
+  if (analyser && audioData && audioContext?.state === 'running' && microphoneStream?.active) {
+    analyser.smoothingTimeConstant = Math.pow(0.8, frameScale);
     analyser.getByteFrequencyData(audioData);
 
     let sum = 0;
@@ -630,6 +733,8 @@ function animate() {
     audioLevel =
       sum / audioData.length / 255;
 
+  } else {
+    audioLevel = 0;
   }
 
 // 천천히 따라오도록 smoothing
@@ -637,8 +742,8 @@ function animate() {
 // Audio Lag - 빠르게 반응 / 천천히 복귀
 // ==============================================
 
-const attack = 0.35;
-const release = 0.02;
+const attack = 1 - Math.pow(1 - 0.35, frameScale);
+const release = 1 - Math.pow(1 - 0.02, frameScale);
 
 if (audioLevel > smoothAudioLevel) {
 
@@ -662,8 +767,8 @@ const reactiveAudio =
 const audioStrength =
   reactiveAudio * 20.0;
 
-  if (frameCount % 30 === 0) {
-  console.log(
+  if (debug && frameCount % 120 === 0) {
+  log(
     'audio:',
     audioLevel.toFixed(3),
     'strength:',
@@ -673,22 +778,17 @@ const audioStrength =
 
   // 전체 모델 회전
   if (pointCloudGroup) {
-    pointCloudGroup.rotation.y += 0.002;
+    pointCloudGroup.rotation.y += 0.002 * frameScale;
   }
 
-  // Noise는 2프레임에 한 번만 계산
-  if (frameCount % 2 === 0) {
+  // Desktop keeps its original cadence; mobile updates at most 30 times/second.
+  const updatePoints = Number.isFinite(quality.maxFps)
+    ? lastPointUpdate === null || now - lastPointUpdate >= 1000 / quality.pointUpdateHz - 0.5
+    : frameCount % 2 === 0;
+  if (updatePoints) {
+    lastPointUpdate = now;
 
     pointClouds.forEach((points) => {
-
-      if (frameCount % 120 === 0) {
-  console.log(
-    'ANIMATING:',
-    points.name || 'unnamed',
-    points.geometry.attributes.position.count,
-    points.userData.scatterDirections?.length
-  );
-}
 
       const positionAttribute =
         points.geometry.attributes.position;
@@ -704,6 +804,11 @@ const audioStrength =
 
       const amplitude = 0.08;
       const speed = 1.2;
+      const scatter = points.userData.scatterDirections;
+      const scatterAmount = audioStrength * points.userData.scaleCompensation;
+      const phaseX = time * speed;
+      const phaseY = phaseX * 0.73;
+      const phaseZ = phaseX * 0.91;
 
       for (let i = 0; i < randomOffsets.length; i++) {
 
@@ -711,38 +816,20 @@ const audioStrength =
         const offset = randomOffsets[i];
 
         const moveX =
-          Math.sin(time * speed + offset)
+          Math.sin(phaseX + offset)
           * amplitude;
 
         const moveY =
           Math.sin(
-            time * speed * 0.73 +
+            phaseY +
             offset * 1.7
           ) * amplitude;
 
         const moveZ =
           Math.cos(
-            time * speed * 0.91 +
+            phaseZ +
             offset * 2.3
           ) * amplitude;
-
-        // 원점에서 포인트가 향하는 방향
-          const scatter =
-  points.userData.scatterDirections;
-
-const worldScale =
-  points.userData.worldScale || 1;
-
-// 작은 scale을 가진 Mesh의 이동량 보정
-const scaleCompensation =
-  THREE.MathUtils.clamp(
-    1 / worldScale,
-    1,
-    1000
-  );
-
-const scatterAmount =
-  audioStrength * scaleCompensation;
 
 positions[i3] =
   originals[i3]
@@ -761,35 +848,89 @@ positions[i3 + 2] =
       }
 
       positionAttribute.needsUpdate = true;
+      // A conservative bound follows displacement without rescanning all points.
+      points.geometry.boundingSphere.radius = points.userData.baseRadius
+        + Math.sqrt(3) * amplitude + Math.abs(scatterAmount);
 
     });
 
   }
 
-  composer.render();
+  afterimagePass.uniforms.damp.value = Math.pow(0.90, frameScale);
+  composer.render(delta);
+  renderedFrames++;
 }
 
-animate();
+function startAnimation() {
+  if (animationId !== null || document.hidden || contextLost) return;
+  lastFrameTime = lastPointUpdate = renderSchedule = null;
+  animationId = requestAnimationFrame(animate);
+}
+
+function pauseAnimation() {
+  if (animationId !== null) cancelAnimationFrame(animationId);
+  animationId = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    pauseAnimation();
+    audioContext?.suspend().catch(() => {});
+  } else {
+    resizePending = true;
+    audioContext?.resume().catch(() => {});
+    startAnimation();
+  }
+});
+window.addEventListener('pagehide', () => {
+  pauseAnimation();
+  stopMicrophone();
+});
+window.addEventListener('pageshow', () => {
+  resizePending = true;
+  startAnimation();
+});
+renderer.domElement.addEventListener('webglcontextlost', event => {
+  event.preventDefault();
+  contextLost = true;
+  pauseAnimation();
+  showStatus('그래픽 연결이 중단되었습니다. 복구를 기다리는 중입니다…');
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => {
+  contextLost = false;
+  // Previous-frame images are invalid after GPU context restoration.
+  const passIndex = composer.passes.indexOf(afterimagePass);
+  afterimagePass.dispose();
+  afterimagePass = new AfterimagePass();
+  afterimagePass.uniforms.damp.value = 0.90;
+  composer.passes[passIndex] = afterimagePass;
+  resizePending = true;
+  showStatus(pointCloudGroup ? '' : '작품을 불러오는 중입니다…');
+  startAnimation();
+});
 
 
 // ======================================================
 // Window Resize
 // ======================================================
 
-window.addEventListener(
-  'resize',
-  () => {
-
-    camera.aspect =
-      window.innerWidth /
-      window.innerHeight;
-
-    camera.updateProjectionMatrix();
-
-    renderer.setSize(
-      window.innerWidth,
-      window.innerHeight
-    );
-
+function resizeViewport() {
+  resizePending = false;
+  const width = Math.max(1, window.innerWidth);
+  const height = Math.max(1, window.innerHeight);
+  const ratio = pixelRatioFor(quality, width, height, window.devicePixelRatio);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  if (renderer.getPixelRatio() !== ratio) {
+    renderer.setPixelRatio(ratio);
+    composer.setPixelRatio(ratio);
   }
-);
+  renderer.setSize(width, height);
+  composer.setSize(width, height);
+}
+
+const requestResize = () => { resizePending = true; };
+window.addEventListener('resize', requestResize);
+window.addEventListener('orientationchange', requestResize);
+window.visualViewport?.addEventListener('resize', requestResize);
+startAnimation();
