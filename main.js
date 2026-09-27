@@ -173,26 +173,83 @@ let microphoneStream = null;
 let microphoneSource = null;
 let microphonePending = false;
 let microphoneEpoch = 0;
+let microphoneOutput = null;
+
+const microphoneControls = document.createElement('div');
+microphoneControls.id = 'microphone-controls';
+const microphoneButton = document.createElement('button');
+microphoneButton.type = 'button';
+microphoneButton.setAttribute('aria-describedby', 'microphone-message');
+const microphoneMessage = document.createElement('p');
+microphoneMessage.id = 'microphone-message';
+microphoneMessage.setAttribute('role', 'status');
+microphoneControls.append(microphoneButton, microphoneMessage);
+document.body.appendChild(microphoneControls);
+
+function setMicrophoneState(state, message) {
+  microphoneControls.dataset.state = state;
+  microphoneControls.hidden = !quality.microphoneControl
+    && !['error', 'unavailable', 'paused'].includes(state);
+  microphoneButton.textContent = {
+    idle: '마이크 켜기', pending: '마이크 연결 중…', running: '마이크 끄기',
+    paused: '마이크 다시 시작', error: '마이크 다시 연결', unavailable: '마이크 사용 확인'
+  }[state];
+  microphoneButton.setAttribute('aria-pressed', String(state === 'running'));
+  microphoneButton.setAttribute('aria-busy', String(state === 'pending'));
+  microphoneMessage.textContent = message;
+}
+
+function updateMicrophoneState() {
+  if (microphonePending) return;
+  const track = microphoneStream?.getAudioTracks()[0];
+  if (!track || track.readyState !== 'live') return;
+  if (audioContext?.state === 'running' && !track.muted) {
+    setMicrophoneState('running', '마이크가 연결되었습니다. 소리를 내면 점들이 반응합니다.');
+  } else {
+    setMicrophoneState('paused', '마이크 입력이 일시 중지되었습니다. 버튼을 눌러 다시 시작해 주세요.');
+  }
+}
+
+function resumeMicrophoneContext() {
+  const context = audioContext;
+  if (!context || context.state === 'closed') return;
+  // Do not await this before getUserMedia: some mobile browsers keep resume()
+  // pending until capture starts. Both requests must begin in the user gesture.
+  context.resume().then(() => {
+    if (context === audioContext) updateMicrophoneState();
+  }).catch(() => {
+    if (context === audioContext) updateMicrophoneState();
+  });
+}
+
+setMicrophoneState('idle', '버튼을 누르고 마이크 사용을 허용해 주세요.');
 
 async function startMicrophone() {
-  if (microphonePending) return;
-  microphonePending = true;
+  if (!window.isSecureContext) {
+    setMicrophoneState('unavailable', '마이크는 HTTPS 주소에서 사용할 수 있습니다. 보안 연결로 사이트를 열어 주세요.');
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setMicrophoneState('unavailable', '이 브라우저에서는 마이크를 사용할 수 없습니다. Safari 또는 Chrome에서 사이트를 열어 주세요.');
+    return;
+  }
   const epoch = microphoneEpoch;
+  let ownsRequest = false;
   try {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('마이크는 HTTPS 또는 localhost에서 사용할 수 있습니다.');
-    }
-    // Create/resume synchronously with the gesture, before the permission prompt.
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    audioContext ??= new AudioContextClass();
-    const resumed = audioContext.resume();
+    if (!audioContext || audioContext.state === 'closed') {
+      audioContext = new AudioContextClass();
+      audioContext.addEventListener('statechange', updateMicrophoneState);
+    }
+    resumeMicrophoneContext();
+    if (microphonePending) return;
     if (analyser && microphoneStream?.active) {
-      await resumed;
-      showStatus();
+      updateMicrophoneState();
       return;
     }
-    await resumed;
-    if (epoch !== microphoneEpoch) return;
+    microphonePending = true;
+    ownsRequest = true;
+    setMicrophoneState('pending', '브라우저의 마이크 권한 창에서 허용을 선택해 주세요.');
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (epoch !== microphoneEpoch) {
       stream.getTracks().forEach(track => track.stop());
@@ -200,35 +257,81 @@ async function startMicrophone() {
     }
     microphoneStream = stream;
     microphoneSource?.disconnect();
+    analyser?.disconnect();
+    microphoneOutput?.disconnect();
     microphoneSource = audioContext.createMediaStreamSource(stream);
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.8;
     audioData = new Uint8Array(analyser.frequencyBinCount);
     microphoneSource.connect(analyser);
-    if (document.hidden) await audioContext.suspend();
-    showStatus();
+    // Keep an output-connected graph for mobile engines without playing the mic
+    // through the speaker (zero gain prevents feedback).
+    microphoneOutput = audioContext.createGain();
+    microphoneOutput.gain.value = 0;
+    analyser.connect(microphoneOutput);
+    microphoneOutput.connect(audioContext.destination);
+    for (const track of stream.getAudioTracks()) {
+      track.addEventListener('ended', () => {
+        if (microphoneStream !== stream) return;
+        stopMicrophone();
+        setMicrophoneState('error', '마이크 연결이 끊어졌습니다. 다시 연결해 주세요.');
+      });
+      track.addEventListener('mute', updateMicrophoneState);
+      track.addEventListener('unmute', updateMicrophoneState);
+    }
+    if (document.hidden) audioContext.suspend().catch(() => {});
+    else resumeMicrophoneContext();
     log('Microphone connected');
   } catch (error) {
     if (epoch !== microphoneEpoch) return;
     stopMicrophone();
-    showStatus('마이크를 연결하지 못했습니다. 권한을 확인한 뒤 화면을 다시 눌러 주세요.');
+    const messages = {
+      NotAllowedError: '마이크 권한이 차단되었습니다. 브라우저 사이트 설정에서 마이크를 허용한 뒤 다시 눌러 주세요.',
+      SecurityError: '이 화면에서는 마이크 접근이 제한됩니다. Safari 또는 Chrome에서 사이트를 직접 열어 주세요.',
+      NotFoundError: '사용할 수 있는 마이크를 찾지 못했습니다. 기기의 마이크 연결을 확인해 주세요.',
+      NotReadableError: '마이크를 시작하지 못했습니다. 마이크를 사용하는 다른 앱을 닫고 다시 눌러 주세요.'
+    };
+    setMicrophoneState('error', messages[error.name] || '마이크를 연결하지 못했습니다. Safari 또는 Chrome에서 다시 시도해 주세요.');
     console.error('Microphone error:', error);
   } finally {
-    microphonePending = false;
+    if (ownsRequest && epoch === microphoneEpoch) {
+      microphonePending = false;
+      updateMicrophoneState();
+    }
   }
 }
 
 function stopMicrophone() {
   microphoneEpoch++;
+  microphonePending = false;
   microphoneSource?.disconnect();
+  analyser?.disconnect();
+  microphoneOutput?.disconnect();
   microphoneStream?.getTracks().forEach(track => track.stop());
   if (audioContext && audioContext.state !== 'closed') audioContext.close().catch(() => {});
   microphoneSource = microphoneStream = audioContext = analyser = audioData = null;
+  microphoneOutput = null;
   audioLevel = smoothAudioLevel = 0;
+  setMicrophoneState('idle', '버튼을 누르고 마이크 사용을 허용해 주세요.');
 }
 
-window.addEventListener('click', startMicrophone);
+microphoneButton.addEventListener('click', event => {
+  event.stopPropagation();
+  if (microphoneControls.dataset.state === 'running') stopMicrophone();
+  else {
+    // Recreate an interrupted mobile context if a normal resume did not recover.
+    if (microphoneControls.dataset.state === 'paused') stopMicrophone();
+    startMicrophone();
+  }
+});
+function startMicrophoneFromScene(event) {
+  if (microphoneControls.contains(event.target)) return;
+  startMicrophone();
+}
+// Keep desktop click behavior, with a direct touch gesture for mobile canvases.
+window.addEventListener('click', startMicrophoneFromScene);
+window.addEventListener('touchend', startMicrophoneFromScene, { passive: true });
 
 loader.load(
 
@@ -878,7 +981,7 @@ document.addEventListener('visibilitychange', () => {
     audioContext?.suspend().catch(() => {});
   } else {
     resizePending = true;
-    audioContext?.resume().catch(() => {});
+    resumeMicrophoneContext();
     startAnimation();
   }
 });

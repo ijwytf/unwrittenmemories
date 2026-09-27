@@ -108,6 +108,23 @@ async function open(browser, url, mobile, source=current, audio='tone') {
   page.on('requestfailed',request=>errors.push(request.url()+': '+request.failure()?.errorText));
   await page.addInitScript(mode=>{
     window.__micRequests=0;
+    if(mode==='native') {
+      const capture=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia=async constraints=>{
+        window.__micRequests++;
+        const stream=await capture(constraints);
+        window.__tone={stream};
+        return stream;
+      };
+      return;
+    }
+    if(mode==='resume-waits-for-capture') {
+      const resume=AudioContext.prototype.resume;
+      AudioContext.prototype.resume=function(){
+        if(window.__micRequests===0) return new Promise(()=>{});
+        return resume.call(this);
+      };
+    }
     navigator.mediaDevices.getUserMedia=async()=>{
       window.__micRequests++;
       await new Promise(resolve=>setTimeout(resolve,80));
@@ -198,9 +215,11 @@ async function run() {
     await m.screenshot({path:path.join(artifacts,'mobile-landscape.png')});
     console.log('PASS mobile model, point budget, effects, orientation; observed FPS',fps.toFixed(1));
 
-    await m.evaluate(()=>{document.body.click();document.body.click()});
+    await m.locator('#microphone-controls button').tap();
+    await m.evaluate(()=>document.body.click());
     await m.waitForFunction(()=>window.__check.snapshot().audio.level>0.01);
     assert.equal(await m.evaluate(()=>window.__micRequests),1);
+    await m.waitForFunction(()=>document.querySelector('#microphone-controls').dataset.state==='running');
     const sound=await m.evaluate(()=>window.__check.snapshot());
     assert.ok(Math.abs(sound.positionDelta)>0.08,'audio must scatter points beyond noise alone');
     await m.evaluate(()=>window.__tone.gain.gain.value=0);
@@ -225,12 +244,52 @@ async function run() {
     console.log('PASS mobile audio attack/release, hide/resume, GPU recovery and track cleanup');
 
     const denied=await open(browser,url,true,current,'denied');
-    await denied.page.evaluate(()=>document.body.click());
-    await denied.page.waitForFunction(()=>document.querySelector('[role=status]').textContent.includes('마이크를 연결하지'));
-    await denied.page.evaluate(()=>document.body.click());
+    await denied.page.locator('#microphone-controls button').tap();
+    await denied.page.waitForFunction(()=>document.querySelector('#microphone-message').textContent.includes('권한이 차단'));
+    await denied.page.locator('#microphone-controls button').tap();
     await denied.page.waitForFunction(()=>window.__micRequests===2);
     await denied.context.close();
     console.log('PASS denied microphone has visible feedback and can retry');
+
+    const waiting=await open(browser,url,true,current,'resume-waits-for-capture');
+    await waiting.page.locator('#microphone-controls button').tap();
+    await waiting.page.waitForFunction(()=>window.__check.snapshot().audio.level>0.01);
+    assert.equal(await waiting.page.evaluate(()=>window.__micRequests),1);
+    await waiting.page.waitForFunction(()=>document.querySelector('#microphone-controls').dataset.state==='running');
+    await waiting.page.locator('#microphone-controls button').tap();
+    assert.equal(await waiting.page.evaluate(()=>window.__tone.stream.getTracks().every(t=>t.readyState==='ended')),true);
+    await waiting.page.locator('#microphone-controls button').tap();
+    await waiting.page.waitForFunction(()=>window.__micRequests===2 && window.__check.snapshot().audio.level>0.01);
+    assert.deepEqual(waiting.errors,[]);
+    await waiting.context.close();
+    console.log('PASS microphone request is not blocked by pending audio resume; touch toggle reconnects');
+
+    const insecure=await open(browser,url,true);
+    await insecure.page.evaluate(()=>Object.defineProperty(window,'isSecureContext',{value:false,configurable:true}));
+    await insecure.page.locator('#microphone-controls button').tap();
+    assert.equal(await insecure.page.evaluate(()=>window.__micRequests),0);
+    assert.match(await insecure.page.locator('#microphone-message').innerText(),/HTTPS/);
+    await insecure.context.close();
+    console.log('PASS insecure connections display HTTPS guidance');
+
+    // Real browser capture API with a fake device, without disabling autoplay
+    // policy. This tests trusted touch activation rather than script-only clicks.
+    const captureBrowser=await chromium.launch({headless:true,channel:'msedge',args:[
+      '--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream'
+    ]});
+    try {
+      const native=await open(captureBrowser,url,true,current,'native');
+      await native.page.locator('#microphone-controls button').tap();
+      await native.page.waitForFunction(()=>window.__check.snapshot().audio.level>0.01);
+      await native.page.waitForFunction(()=>document.querySelector('#microphone-controls').dataset.state==='running');
+      assert.equal(await native.page.evaluate(()=>window.__micRequests),1);
+      await native.page.screenshot({path:path.join(artifacts,'mobile-microphone.png')});
+      assert.deepEqual(native.errors,[]);
+      await native.context.close();
+    } finally {
+      await captureBrowser.close();
+    }
+    console.log('PASS trusted touch starts native capture under default autoplay policy (fake device)');
 
     const failedContext=await browser.newContext({...devices['iPhone 13']});
     const failed=await failedContext.newPage();

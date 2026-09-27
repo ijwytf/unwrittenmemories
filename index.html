@@ -15,6 +15,40 @@
     canvas {
       display: block;
     }
+
+    #microphone-controls {
+      position: fixed;
+      top: max(12px, env(safe-area-inset-top));
+      right: max(12px, env(safe-area-inset-right));
+      z-index: 2;
+      max-width: min(260px, calc(100vw - 24px));
+      padding: 10px 12px;
+      border: 1px solid #ffffff30;
+      border-radius: 12px;
+      background: #000c;
+      color: #ddd;
+      font: 12px/1.5 sans-serif;
+    }
+
+    #microphone-controls button {
+      min-height: 44px;
+      padding: 8px 14px;
+      border: 1px solid #ffffff60;
+      border-radius: 8px;
+      background: #171717;
+      color: white;
+      font: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    #microphone-controls button:focus-visible {
+      outline: 2px solid white;
+      outline-offset: 3px;
+    }
+
+    #microphone-message { margin: 8px 0 0; }
   </style>
 
   <script type="importmap">

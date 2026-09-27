@@ -4,13 +4,13 @@ export const QUALITY_PROFILES = Object.freeze({
     name: 'desktop', modelUrl: './ptc.glb', pixelRatio: 1.1,
     maxPixels: Infinity, pointDensity: 0.2, maxPoints: Infinity,
     bloomResolution: 1, maxFps: Infinity, pointUpdateHz: 30,
-    antialias: true, conversionBatchSize: Infinity
+    antialias: true, conversionBatchSize: Infinity, microphoneControl: false
   }),
   mobile: Object.freeze({
     name: 'mobile', modelUrl: './ptc-mobile.glb', pixelRatio: 1,
     maxPixels: 800000, pointDensity: 0.06, maxPoints: 100000,
     bloomResolution: 0.65, maxFps: 30, pointUpdateHz: 30,
-    antialias: false, conversionBatchSize: 4096
+    antialias: false, conversionBatchSize: 4096, microphoneControl: true
   })
 });
 
