@@ -14,6 +14,40 @@ const current = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 
 const probe = `
 window.__check = {
+  retargetContinuity: word => {
+    const shape = () => {
+      const t=textMorph.source ? textMorph.textProgress : 1;
+      const a=textMorph.source ? textMorph.scaleFor(textMorph.source)*(1-t) : 0;
+      const b=textMorph.scaleFor(textMorph.text)*t;
+      return pointClouds.flatMap((_,index)=>Array.from(textMorph.text.targets[index].slice(0,30),
+        (v,i)=>v*b+(textMorph.source ? textMorph.source.targets[index][i]*a : 0)));
+    };
+    const before=shape(), blend=textMorph.blend;
+    textMorph.search(word);
+    const after=shape();
+    return {error:Math.max(...before.map((v,i)=>Math.abs(v-after[i]))),blendChange:textMorph.blend-blend};
+  },
+  verifyReturn: () => {
+    frameCount=1; renderSchedule=null; lastPointUpdate=null;
+    animate(performance.now()); pauseAnimation();
+    const t=lastPointUpdate*0.001;
+    const strength=Math.max(0,smoothAudioLevel-0.01)*20;
+    let mismatches=0;
+    for(const p of pointClouds) {
+      const u=p.userData, a=p.geometry.attributes.position.array;
+      for(let i=0;i<u.randomOffsets.length;i++) {
+        const j=i*3,o=u.randomOffsets[i],s=strength*u.scaleCompensation;
+        const moves=[Math.sin(t*1.2+o)*0.08,Math.sin(t*1.2*0.73+o*1.7)*0.08,Math.cos(t*1.2*0.91+o*2.3)*0.08];
+        for(let k=0;k<3;k++) if(a[j+k]!==Math.fround(u.originalPositions[j+k]+moves[k]+u.scatterDirections[j+k]*s))mismatches++;
+      }
+    }
+    startAnimation(); return mismatches;
+  },
+  morph: () => ({blend:textMorph.blend, cache:textMorph.cache.size, word:textMorph.word, progress:textMorph.textProgress,
+    targets:textMorph.text?.targets.map(t=>t.length),
+    originals:pointClouds.map(p=>p.userData.originalPositions.reduce((a,b)=>a+b,0)),
+    finite:pointClouds.every(p=>p.geometry.attributes.position.array.every(Number.isFinite)),
+    culling:pointClouds.map(p=>p.frustumCulled)}),
   snapshot: () => ({
     ready: !!pointCloudGroup && pointClouds.length === 18,
     quality: typeof quality === 'undefined' ? 'desktop' : quality.name,
@@ -148,6 +182,89 @@ async function open(browser, url, mobile, source=current, audio='tone') {
   return {context,page,errors};
 }
 
+async function checkMorph(page, label) {
+  const input=page.locator('#point-search-input');
+  const search=async word=>{await input.fill(word);await input.press('Enter');};
+  const bounds=await input.boundingBox();
+  assert.ok(Math.abs(bounds.x+bounds.width/2-page.viewportSize().width/2)<1,'search must be horizontally centered');
+  const original=await page.evaluate(()=>window.__check.morph());
+  const micRequests=await page.evaluate(()=>window.__micRequests);
+  await input.fill('memory보은123!');
+  assert.equal(await input.inputValue(),'memory');
+  await input.fill('나의 기억들');
+  assert.equal(await input.inputValue(),'나의 기억');
+  await input.fill('heritages');
+  assert.equal(await input.inputValue(),'heritage');
+  await input.fill('');
+  await input.evaluate(element=>{
+    element.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
+    element.value='보으';
+    element.dispatchEvent(new InputEvent('input',{bubbles:true,isComposing:true}));
+    element.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}));
+    element.form.requestSubmit();
+  });
+  assert.equal(await input.inputValue(),'보으');
+  assert.equal((await page.evaluate(()=>window.__check.morph())).blend,0);
+  await input.evaluate(element=>{
+    element.value='보은';
+    element.dispatchEvent(new CompositionEvent('compositionend',{data:'은',bubbles:true}));
+    element.dispatchEvent(new InputEvent('input',{bubbles:true}));
+  });
+  assert.equal(await input.inputValue(),'보은');
+  assert.equal(await page.evaluate(()=>window.__micRequests),micRequests);
+  await page.evaluate(()=>{if(window.__tone)window.__tone.gain.gain.value=0});
+  for(let cycle=0;cycle<2;cycle++) {
+    await search('보은');
+    await page.waitForFunction(()=>window.__check.morph().blend===1);
+    const text=await page.evaluate(()=>window.__check.morph());
+    assert.equal(text.targets.length,18);
+    assert.ok(text.cache<=2);
+    assert.ok(text.finite);
+    assert.deepEqual(text.originals,original.originals);
+    assert.ok(text.culling.every(v=>v===false));
+    if(cycle===0) {
+      await page.waitForTimeout(1500);
+      await page.screenshot({path:path.join(artifacts,`${label}-text.png`)});
+      if(label==='mobile') {
+        const viewport=page.viewportSize();
+        await page.setViewportSize({width:390,height:844});
+        await page.waitForTimeout(700);
+        await page.screenshot({path:path.join(artifacts,'mobile-text-portrait.png')});
+        await page.setViewportSize(viewport);
+      }
+      await page.evaluate(()=>{if(window.__tone)window.__tone.gain.gain.value=0.7});
+      await page.waitForFunction(()=>window.__check.snapshot().audio.level>0.01);
+      assert.equal((await page.evaluate(()=>window.__check.morph())).blend,1);
+      await page.evaluate(()=>{if(window.__tone)window.__tone.gain.gain.value=0});
+    }
+    for(const word of ['기억','괴산','집','heritage']) {
+      await search(word);
+      assert.equal((await page.evaluate(()=>window.__check.morph())).blend,1,'word changes must not return through 3D');
+      await page.waitForFunction(()=>window.__check.morph().progress===1);
+      assert.equal((await page.evaluate(()=>window.__check.morph())).word,word);
+    }
+    if(cycle===0) await page.screenshot({path:path.join(artifacts,`${label}-heritage.png`)});
+    await search('   ');
+    await page.waitForFunction(()=>window.__check.morph().blend===0);
+    const restored=await page.evaluate(()=>window.__check.morph());
+    assert.deepEqual(restored.originals,original.originals);
+    assert.deepEqual(restored.culling,original.culling);
+    assert.ok(restored.finite);
+    assert.equal(await page.evaluate(()=>window.__check.verifyReturn()),0,'all positions must exactly match original animation formula on return');
+  }
+  await search('보은');
+  await page.waitForFunction(()=>window.__check.morph().blend>0.1);
+  await search('기억');
+  await page.waitForFunction(()=>window.__check.morph().progress>0.1);
+  const continuity=await page.evaluate(()=>window.__check.retargetContinuity('memory'));
+  assert.ok(continuity.error<0.000001,'retargeting must preserve current text coordinates');
+  assert.equal(continuity.blendChange,0);
+  await search('');
+  await page.waitForFunction(()=>window.__check.morph().blend===0);
+  assert.equal(await page.evaluate(()=>document.activeElement.id==='point-search-input'),false);
+  console.log(`PASS ${label} all-cloud text morph, audio, repeated return, reversal and immutable originals`);
+}
+
 async function run() {
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const url=`http://127.0.0.1:${server.address().port}`;
@@ -192,6 +309,7 @@ async function run() {
     assert.equal(resizedPc.aspect,1000/700);
     assert.deepEqual(resizedPc.camera,oldState.camera);
     assert.deepEqual(pc.errors,[]);
+    await checkMorph(pc.page,'desktop');
     await pc.context.close();
     console.log('PASS desktop microphone reacts; repeated clicks create one stream');
 
@@ -231,10 +349,12 @@ async function run() {
       text:'rgb(0, 0, 0)',canvasOpacity:'0',scrollable:true,micRequests:0
     });
     await m.screenshot({path:path.join(artifacts,'credits-mobile.png'),fullPage:true});
+    assert.equal(await m.locator('#point-search-input').isVisible(),false);
     await m.locator('#credits').tap({position:{x:20,y:300}});
     assert.equal(await m.evaluate(()=>window.__micRequests),0,'credits input reached microphone handler');
     assert.equal(galleryRequests.length,0,'gallery image loaded before gallery entry');
     await m.locator('#gallery-open').tap();
+    assert.equal(await m.locator('#point-search-input').isVisible(),false);
     await m.waitForFunction(()=>document.body.classList.contains('gallery-open'));
     await m.waitForFunction(()=>{
       const image=document.querySelector('#gallery-image');
@@ -249,8 +369,10 @@ async function run() {
     assert.equal(await m.evaluate(()=>window.__micRequests),0,'gallery input reached microphone handler');
     await m.locator('#gallery-next').tap();
     assert.equal(await m.locator('#gallery-counter').innerText(),'2 / 8');
+    await m.waitForFunction(()=>{const i=document.querySelector('#gallery-image');return i.complete&&i.naturalWidth>0});
     await m.locator('.gallery-region',{hasText:'보은'}).tap();
     assert.equal(await m.locator('#gallery-counter').innerText(),'1 / 9');
+    await m.waitForFunction(()=>{const i=document.querySelector('#gallery-image');return i.complete&&i.naturalWidth>0});
     await m.evaluate(()=>{
       const media=document.querySelector('#gallery-media');
       const start=new Touch({identifier:1,target:media,clientX:60,clientY:200});
@@ -259,6 +381,7 @@ async function run() {
       media.dispatchEvent(new TouchEvent('touchend',{changedTouches:[end],bubbles:true}));
     });
     assert.equal(await m.locator('#gallery-counter').innerText(),'9 / 9');
+    await m.waitForFunction(()=>{const i=document.querySelector('#gallery-image');return i.complete&&i.naturalWidth>0});
     await m.locator('#gallery-close').tap();
     await m.waitForFunction(()=>!document.body.classList.contains('gallery-open'));
     assert.equal(await m.locator('#credits-content').getAttribute('aria-hidden'),'false');
@@ -306,6 +429,7 @@ async function run() {
       const restored=await m.evaluate(()=>window.__check.snapshot().rendered);
       await m.waitForFunction(frame=>window.__check.snapshot().rendered>frame,restored);
     }
+    await checkMorph(m,'mobile');
     await m.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));
     assert.equal(await m.evaluate(()=>window.__tone.stream.getTracks().every(t=>t.readyState==='ended')),true);
     assert.deepEqual(mobile.errors,[]);

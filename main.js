@@ -7,6 +7,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { selectQuality, pixelRatioFor, pointCountsFor } from './quality.js';
+import { TextMorph } from './text-morph.js';
+import { createSearchInput } from './search-input.js';
 
 const quality = selectQuality();
 const debug = new URLSearchParams(location.search).has('debug');
@@ -164,6 +166,15 @@ const loader = new GLTFLoader();
 
 let pointCloudGroup = null;
 const pointClouds = [];
+let textMorph = null;
+const searchInput = createSearchInput(word => {
+  if (!textMorph) return;
+  try {
+    textMorph.search(word);
+  } catch (error) {
+    showStatus(error.message);
+  }
+});
 let analyser = null;
 let audioData = null;
 let audioLevel = 0;
@@ -741,6 +752,8 @@ log(
 
     model.visible = true;
     pointCloudGroup = model;
+    textMorph = new TextMorph(camera, pointClouds, model);
+    searchInput.disabled = false;
     showStatus();
     log(
       'Point Cloud conversion complete'
@@ -885,13 +898,15 @@ const audioStrength =
   }
 
   // Desktop keeps its original cadence; mobile updates at most 30 times/second.
-  const updatePoints = Number.isFinite(quality.maxFps)
+  const morphUpdate = textMorph?.update(delta);
+  const updatePoints = morphUpdate || (Number.isFinite(quality.maxFps)
     ? lastPointUpdate === null || now - lastPointUpdate >= 1000 / quality.pointUpdateHz - 0.5
-    : frameCount % 2 === 0;
+    : frameCount % 2 === 0);
   if (updatePoints) {
     lastPointUpdate = now;
 
-    pointClouds.forEach((points) => {
+    pointClouds.forEach((points, cloudIndex) => {
+      textMorph?.prepare(points, cloudIndex);
 
       const positionAttribute =
         points.geometry.attributes.position;
@@ -948,6 +963,9 @@ positions[i3 + 2] =
   originals[i3 + 2]
   + moveZ
   + scatter[i3 + 2] * scatterAmount;
+        if (textMorph?.blend) {
+          textMorph.apply(positions, i3, moveX, moveY, moveZ, scatter, audioStrength);
+        }
       }
 
       positionAttribute.needsUpdate = true;

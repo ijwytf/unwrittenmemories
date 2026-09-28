@@ -436,6 +436,21 @@
         transition-duration: 1ms;
       }
     }
+    #point-search {
+      position: fixed; left: 50%; transform: translateX(-50%); z-index: 2;
+      bottom: calc(24px + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset, 0px));
+      width: min(220px, calc(100% - 48px)); margin: 0;
+    }
+    #point-search-input {
+      box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 4px;
+      appearance: none; border-radius: 0; border: 0; border-bottom: 1px solid #ffffff70;
+      outline: none; background: transparent; color: #fff;
+      font: 16px/1.4 sans-serif; text-align: center; letter-spacing: 0.06em;
+    }
+    #point-search-input::placeholder { color: #ffffffa0; font-size: 11px; letter-spacing: 0.16em; }
+    #point-search-input:focus { border-bottom-color: #fff; }
+    #point-search-input:disabled { opacity: 0.35; }
+    body.credits-open #point-search { visibility: hidden; pointer-events: none; }
   </style>
 
   <script type="importmap">
