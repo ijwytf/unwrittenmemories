@@ -14,6 +14,27 @@ const current = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 
 const probe = `
 window.__check = {
+  microphone: () => ({
+    state:document.querySelector('#microphone-controls').dataset.state,
+    pending:microphonePending,context:audioContext?.state,
+    streamActive:microphoneStream?.active,track:microphoneStream?.getAudioTracks()[0]?.readyState,
+    sameContext:audioContext===window.__heldMicrophoneContext,
+    sameStream:microphoneStream===window.__heldMicrophoneStream
+  }),
+  holdMicrophone: () => {
+    window.__heldMicrophoneContext=audioContext;
+    window.__heldMicrophoneStream=microphoneStream;
+  },
+  suspendMicrophone: async () => {
+    await audioContext.suspend(); updateMicrophoneState();
+  },
+  closeMicrophoneContext: async () => {
+    await audioContext.close(); updateMicrophoneState();
+  },
+  endMicrophoneTrack: () => {
+    const track=microphoneStream.getAudioTracks()[0];
+    track.stop(); track.dispatchEvent(new Event('ended'));
+  },
   retargetContinuity: word => {
     const shape = () => {
       const t=textMorph.source ? textMorph.textProgress : 1;
@@ -306,6 +327,16 @@ async function run() {
     await pc.page.evaluate(()=>{window.__check.resume();document.body.click();document.body.click();document.body.click()});
     await pc.page.waitForFunction(()=>window.__check.snapshot().audio.level>0.01);
     assert.equal(await pc.page.evaluate(()=>window.__micRequests),1);
+    await pc.page.evaluate(()=>window.__check.suspendMicrophone());
+    await pc.page.waitForFunction(()=>window.__check.microphone().state==='paused');
+    const restartUi=await pc.page.locator('#microphone-controls button').evaluate(button=>{
+      button.click();
+      const controls=button.closest('#microphone-controls');
+      return {hidden:controls.hidden,state:controls.dataset.state};
+    });
+    assert.deepEqual(restartUi,{hidden:false,state:'pending'},'restart UI must remain visible until recovery succeeds');
+    await pc.page.waitForFunction(()=>window.__check.microphone().state==='running');
+    assert.equal(await pc.page.evaluate(()=>window.__micRequests),1,'desktop suspended context must reuse capture');
     await pc.page.setViewportSize({width:1000,height:700});
     await pc.page.waitForTimeout(150);
     const resizedPc=await pc.page.evaluate(()=>window.__check.snapshot());
@@ -414,11 +445,40 @@ async function run() {
 
     await m.locator('#microphone-controls button').tap();
     await m.evaluate(()=>document.body.click());
-    await m.waitForFunction(()=>window.__check.snapshot().audio.level>0.01);
+    await m.waitForFunction(()=>{
+      const state=window.__check.snapshot();
+      return state.audio.level>0.01 && Math.abs(state.positionDelta)>0.08;
+    });
     assert.equal(await m.evaluate(()=>window.__micRequests),1);
     await m.waitForFunction(()=>document.querySelector('#microphone-controls').dataset.state==='running');
     const sound=await m.evaluate(()=>window.__check.snapshot());
     assert.ok(Math.abs(sound.positionDelta)>0.08,'audio must scatter points beyond noise alone');
+    await m.evaluate(()=>{window.__check.holdMicrophone();return window.__check.suspendMicrophone()});
+    await m.waitForFunction(()=>window.__check.microphone().state==='paused');
+    await m.locator('#microphone-controls button').evaluate(button=>{button.click();button.click()});
+    await m.waitForFunction(()=>window.__check.microphone().state==='running' && window.__check.snapshot().audio.level>0.01);
+    let recovered=await m.evaluate(()=>window.__check.microphone());
+    assert.equal(await m.evaluate(()=>window.__micRequests),1,'suspended context must reuse capture');
+    assert.equal(recovered.sameContext,true,'suspended context must be resumed');
+    assert.equal(recovered.sameStream,true,'live stream must be reused');
+
+    await m.evaluate(()=>{window.__check.holdMicrophone();return window.__check.closeMicrophoneContext()});
+    await m.waitForFunction(()=>window.__check.microphone().state==='paused');
+    await m.locator('#microphone-controls button').tap();
+    await m.waitForFunction(()=>window.__check.microphone().state==='running');
+    recovered=await m.evaluate(()=>window.__check.microphone());
+    assert.equal(await m.evaluate(()=>window.__micRequests),1,'closed context with live stream must not recapture');
+    assert.equal(recovered.sameContext,false,'closed context must be replaced');
+    assert.equal(recovered.sameStream,true,'live stream must connect to the replacement context');
+
+    await m.evaluate(()=>{window.__check.holdMicrophone();window.__check.endMicrophoneTrack()});
+    await m.waitForFunction(()=>window.__check.microphone().state==='error');
+    await m.locator('#microphone-controls button').evaluate(button=>{button.click();button.click()});
+    await m.waitForFunction(()=>window.__micRequests===2 && window.__check.microphone().state==='running' && window.__check.snapshot().audio.level>0.01);
+    recovered=await m.evaluate(()=>window.__check.microphone());
+    assert.equal(recovered.sameContext,false,'ended capture must create a usable context');
+    assert.equal(recovered.sameStream,false,'ended capture must be replaced');
+    console.log('PASS microphone restart reuses suspended/live resources, replaces ended/closed resources and deduplicates clicks');
     await m.evaluate(()=>window.__tone.gain.gain.value=0);
     await m.waitForTimeout(1500);
     const quiet=await m.evaluate(()=>window.__check.snapshot());
@@ -429,6 +489,10 @@ async function run() {
     assert.equal(await m.evaluate(()=>window.__check.snapshot().rendered),paused);
     await m.evaluate(()=>window.__check.hide(false));
     await m.waitForFunction(frame=>window.__check.snapshot().rendered>frame,paused);
+    await m.waitForFunction(()=>window.__check.microphone().state==='paused');
+    await m.locator('#microphone-controls button').tap();
+    await m.waitForFunction(()=>window.__check.microphone().state==='running');
+    assert.equal(await m.evaluate(()=>window.__micRequests),2,'visibility recovery must reuse the current live stream');
     if(await m.evaluate(()=>window.__check.loseContext())) {
       await m.waitForTimeout(900);
       const restored=await m.evaluate(()=>window.__check.snapshot().rendered);

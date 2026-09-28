@@ -185,6 +185,7 @@ let microphoneSource = null;
 let microphonePending = false;
 let microphoneEpoch = 0;
 let microphoneOutput = null;
+const observedMicrophoneStreams = new WeakSet();
 
 const microphoneControls = document.createElement('div');
 microphoneControls.id = 'microphone-controls';
@@ -198,8 +199,10 @@ microphoneControls.append(microphoneButton, microphoneMessage);
 document.body.appendChild(microphoneControls);
 
 function setMicrophoneState(state, message) {
+  const keepRecoveryVisible = state === 'pending' && !microphoneControls.hidden;
   microphoneControls.dataset.state = state;
   microphoneControls.hidden = !quality.microphoneControl
+    && !keepRecoveryVisible
     && !['error', 'unavailable', 'paused'].includes(state);
   microphoneButton.textContent = {
     idle: '마이크 켜기', pending: '마이크 연결 중…', running: '마이크 끄기',
@@ -213,8 +216,13 @@ function setMicrophoneState(state, message) {
 function updateMicrophoneState() {
   if (microphonePending) return;
   const track = microphoneStream?.getAudioTracks()[0];
-  if (!track || track.readyState !== 'live') return;
-  if (audioContext?.state === 'running' && !track.muted) {
+  if (!track || track.readyState !== 'live' || !microphoneStream.active) {
+    if (microphoneStream) {
+      setMicrophoneState('paused', '마이크 입력이 중지되었습니다. 버튼을 눌러 다시 연결해 주세요.');
+    }
+    return;
+  }
+  if (audioContext?.state === 'running' && analyser && microphoneSource && !track.muted) {
     setMicrophoneState('running', '마이크가 연결되었습니다. 소리를 내면 점들이 반응합니다.');
   } else {
     setMicrophoneState('paused', '마이크 입력이 일시 중지되었습니다. 버튼을 눌러 다시 시작해 주세요.');
@@ -223,14 +231,76 @@ function updateMicrophoneState() {
 
 function resumeMicrophoneContext() {
   const context = audioContext;
-  if (!context || context.state === 'closed') return;
+  if (!context || context.state === 'closed') return Promise.resolve(false);
+  if (context.state === 'running') return Promise.resolve(true);
   // Do not await this before getUserMedia: some mobile browsers keep resume()
   // pending until capture starts. Both requests must begin in the user gesture.
-  context.resume().then(() => {
+  return context.resume().then(() => {
     if (context === audioContext) updateMicrophoneState();
+    return context.state === 'running';
   }).catch(() => {
     if (context === audioContext) updateMicrophoneState();
+    return false;
   });
+}
+
+function waitForMicrophoneContext(context, timeout = 1500) {
+  if (context.state === 'running') return Promise.resolve(true);
+  return new Promise(resolve => {
+    let timer;
+    const finish = running => {
+      clearTimeout(timer);
+      context.removeEventListener('statechange', check);
+      resolve(running);
+    };
+    const check = () => {
+      if (context.state === 'running') finish(true);
+      else if (context.state === 'closed') finish(false);
+    };
+    context.addEventListener('statechange', check);
+    timer = setTimeout(() => finish(context.state === 'running'), timeout);
+  });
+}
+
+function liveMicrophoneTrack() {
+  const track = microphoneStream?.getAudioTracks()[0];
+  return track?.readyState === 'live' && microphoneStream.active ? track : null;
+}
+
+function connectMicrophoneStream(stream, context) {
+  const previousStream = microphoneStream;
+  microphoneSource?.disconnect();
+  analyser?.disconnect();
+  microphoneOutput?.disconnect();
+  microphoneStream = stream;
+  microphoneSource = context.createMediaStreamSource(stream);
+  analyser = context.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.8;
+  audioData = new Uint8Array(analyser.frequencyBinCount);
+  microphoneSource.connect(analyser);
+  // Keep an output-connected graph for mobile engines without playing the mic
+  // through the speaker (zero gain prevents feedback).
+  microphoneOutput = context.createGain();
+  microphoneOutput.gain.value = 0;
+  analyser.connect(microphoneOutput);
+  microphoneOutput.connect(context.destination);
+  if (previousStream && previousStream !== stream) {
+    previousStream.getTracks().forEach(track => track.stop());
+  }
+  if (!observedMicrophoneStreams.has(stream)) {
+    observedMicrophoneStreams.add(stream);
+    for (const track of stream.getAudioTracks()) {
+      track.addEventListener('ended', () => {
+        if (microphoneStream !== stream) return;
+        stopMicrophone();
+        setMicrophoneState('error', '마이크 연결이 끊어졌습니다. 다시 연결해 주세요.');
+      });
+      track.addEventListener('mute', updateMicrophoneState);
+      track.addEventListener('unmute', updateMicrophoneState);
+    }
+    stream.addEventListener('inactive', updateMicrophoneState);
+  }
 }
 
 setMicrophoneState('idle', '버튼을 누르고 마이크 사용을 허용해 주세요.');
@@ -244,71 +314,86 @@ async function startMicrophone() {
     setMicrophoneState('unavailable', '이 브라우저에서는 마이크를 사용할 수 없습니다. Safari 또는 Chrome에서 사이트를 열어 주세요.');
     return;
   }
+  if (microphonePending) return;
   const epoch = microphoneEpoch;
-  let ownsRequest = false;
+  let failed = false;
+  microphonePending = true;
+  setMicrophoneState('pending', microphoneStream
+    ? '마이크 입력을 다시 시작하는 중입니다…'
+    : '브라우저의 마이크 권한 창에서 허용을 선택해 주세요.');
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!audioContext || audioContext.state === 'closed') {
       audioContext = new AudioContextClass();
       audioContext.addEventListener('statechange', updateMicrophoneState);
     }
+    let context = audioContext;
+    // Start resume and capture synchronously in this user gesture. A few mobile
+    // engines do not resolve resume() until capture itself has started.
     resumeMicrophoneContext();
-    if (microphonePending) return;
-    if (analyser && microphoneStream?.active) {
-      updateMicrophoneState();
-      return;
+    let track = liveMicrophoneTrack();
+    // A live-but-muted track can remain permanently muted after an OS-level
+    // interruption. Release it before asking the device for a replacement.
+    if (track?.muted) {
+      const mutedStream = microphoneStream;
+      microphoneStream = null;
+      microphoneSource?.disconnect();
+      analyser?.disconnect();
+      microphoneOutput?.disconnect();
+      mutedStream.getTracks().forEach(mutedTrack => mutedTrack.stop());
+      track = null;
     }
-    microphonePending = true;
-    ownsRequest = true;
-    setMicrophoneState('pending', '브라우저의 마이크 권한 창에서 허용을 선택해 주세요.');
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    if (epoch !== microphoneEpoch) {
-      stream.getTracks().forEach(track => track.stop());
-      return;
+    const needsCapture = !track;
+    const captureRequest = needsCapture
+      ? navigator.mediaDevices.getUserMedia({ audio: true })
+      : null;
+    if (captureRequest) {
+      const stream = await captureRequest;
+      if (epoch !== microphoneEpoch) {
+        stream.getTracks().forEach(newTrack => newTrack.stop());
+        return;
+      }
+      connectMicrophoneStream(stream, context);
+    } else if (!analyser || !microphoneSource || microphoneSource.context !== context) {
+      connectMicrophoneStream(microphoneStream, context);
     }
-    microphoneStream = stream;
-    microphoneSource?.disconnect();
-    analyser?.disconnect();
-    microphoneOutput?.disconnect();
-    microphoneSource = audioContext.createMediaStreamSource(stream);
-    analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.8;
-    audioData = new Uint8Array(analyser.frequencyBinCount);
-    microphoneSource.connect(analyser);
-    // Keep an output-connected graph for mobile engines without playing the mic
-    // through the speaker (zero gain prevents feedback).
-    microphoneOutput = audioContext.createGain();
-    microphoneOutput.gain.value = 0;
-    analyser.connect(microphoneOutput);
-    microphoneOutput.connect(audioContext.destination);
-    for (const track of stream.getAudioTracks()) {
-      track.addEventListener('ended', () => {
-        if (microphoneStream !== stream) return;
-        stopMicrophone();
-        setMicrophoneState('error', '마이크 연결이 끊어졌습니다. 다시 연결해 주세요.');
-      });
-      track.addEventListener('mute', updateMicrophoneState);
-      track.addEventListener('unmute', updateMicrophoneState);
+    if (document.hidden) {
+      context.suspend().catch(() => {});
+    } else {
+      // A second request covers browsers whose first resume waited for capture.
+      resumeMicrophoneContext();
+      let running = await waitForMicrophoneContext(context);
+      if (!running && liveMicrophoneTrack()) {
+        // Safari can leave a gesture-less visibility resume pending forever.
+        // Rebuild only the audio graph and preserve the already-authorized stream.
+        const previousContext = context;
+        context = new AudioContextClass();
+        audioContext = context;
+        context.addEventListener('statechange', updateMicrophoneState);
+        connectMicrophoneStream(microphoneStream, context);
+        resumeMicrophoneContext();
+        running = await waitForMicrophoneContext(context);
+        if (previousContext.state !== 'closed') previousContext.close().catch(() => {});
+      }
+      if (!running) throw new DOMException('AudioContext did not resume', 'AbortError');
     }
-    if (document.hidden) audioContext.suspend().catch(() => {});
-    else resumeMicrophoneContext();
     log('Microphone connected');
   } catch (error) {
     if (epoch !== microphoneEpoch) return;
-    stopMicrophone();
+    failed = true;
     const messages = {
       NotAllowedError: '마이크 권한이 차단되었습니다. 브라우저 사이트 설정에서 마이크를 허용한 뒤 다시 눌러 주세요.',
       SecurityError: '이 화면에서는 마이크 접근이 제한됩니다. Safari 또는 Chrome에서 사이트를 직접 열어 주세요.',
       NotFoundError: '사용할 수 있는 마이크를 찾지 못했습니다. 기기의 마이크 연결을 확인해 주세요.',
-      NotReadableError: '마이크를 시작하지 못했습니다. 마이크를 사용하는 다른 앱을 닫고 다시 눌러 주세요.'
+      NotReadableError: '마이크를 시작하지 못했습니다. 마이크를 사용하는 다른 앱을 닫고 다시 눌러 주세요.',
+      AbortError: '마이크 연결이 중단되었습니다. 잠시 후 다시 눌러 주세요.'
     };
     setMicrophoneState('error', messages[error.name] || '마이크를 연결하지 못했습니다. Safari 또는 Chrome에서 다시 시도해 주세요.');
     console.error('Microphone error:', error);
   } finally {
-    if (ownsRequest && epoch === microphoneEpoch) {
+    if (epoch === microphoneEpoch) {
       microphonePending = false;
-      updateMicrophoneState();
+      if (!failed) updateMicrophoneState();
     }
   }
 }
@@ -330,11 +415,7 @@ function stopMicrophone() {
 microphoneButton.addEventListener('click', event => {
   event.stopPropagation();
   if (microphoneControls.dataset.state === 'running') stopMicrophone();
-  else {
-    // Recreate an interrupted mobile context if a normal resume did not recover.
-    if (microphoneControls.dataset.state === 'paused') stopMicrophone();
-    startMicrophone();
-  }
+  else startMicrophone();
 });
 function startMicrophoneFromScene(event) {
   if (microphoneControls.contains(event.target)) return;
@@ -999,7 +1080,9 @@ document.addEventListener('visibilitychange', () => {
     audioContext?.suspend().catch(() => {});
   } else {
     resizePending = true;
-    resumeMicrophoneContext();
+    // Mobile browsers may require a fresh gesture. Show the existing restart UI
+    // instead of leaving a resume() promise pending before the button is pressed.
+    updateMicrophoneState();
     startAnimation();
   }
 });
