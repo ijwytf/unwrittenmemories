@@ -212,6 +212,11 @@ async function checkMorph(page, label) {
   });
   assert.equal(await input.inputValue(),'보은');
   assert.equal(await page.evaluate(()=>window.__micRequests),micRequests);
+  await input.press('Enter');
+  await page.waitForFunction(()=>window.__check.morph().blend>0);
+  assert.equal((await page.evaluate(()=>window.__check.morph())).word,'보은');
+  await search('');
+  await page.waitForFunction(()=>window.__check.morph().blend===0);
   await page.evaluate(()=>{if(window.__tone)window.__tone.gain.gain.value=0});
   for(let cycle=0;cycle<2;cycle++) {
     await search('보은');

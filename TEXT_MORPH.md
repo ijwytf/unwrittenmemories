@@ -17,8 +17,9 @@ The language resets after clearing or replacing the entire query. Leading and
 trailing spaces are trimmed on submit; an empty/space-only query returns to 3D.
 
 Composition updates are left untouched. Filtering happens on compositionend and
-ordinary input events, with caret adjustment. IME confirmation Enter is guarded
-against submitting prematurely. No native maxlength is applied during composition.
+ordinary input events, with caret adjustment. A composing submit is ignored, while
+the next non-composing Enter submits through the form's single submit handler.
+No native maxlength is applied during composition.
 Input clicks/touches/keys do not bubble into scene/microphone handlers.
 
 The form uses a thin underline with a 44px input hit area, 16px text to avoid iOS

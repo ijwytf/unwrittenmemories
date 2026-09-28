@@ -31,7 +31,7 @@ export function createSearchInput(onSearch) {
   input.disabled = true;
   form.appendChild(input);
   document.body.appendChild(form);
-  let composing = false, mode = null, suppressSubmit = false;
+  let composing = false, mode = null;
   const normalize = () => {
     const caret = input.selectionStart ?? input.value.length;
     const prefix = sanitizeSearch(input.value.slice(0, caret), mode).value;
@@ -44,7 +44,7 @@ export function createSearchInput(onSearch) {
   };
   input.addEventListener('beforeinput', () => {
     // Selecting/replacing the whole query starts a fresh language choice.
-    if (input.selectionStart === 0 && input.selectionEnd === input.value.length) mode = null;
+    if (!composing && input.selectionStart === 0 && input.selectionEnd === input.value.length) mode = null;
   });
   input.addEventListener('compositionstart', () => {
     if (input.selectionStart === 0 && input.selectionEnd === input.value.length) mode = null;
@@ -52,18 +52,11 @@ export function createSearchInput(onSearch) {
   });
   input.addEventListener('compositionend', () => {
     composing = false;
+    // The committed value is the first safe time to enforce query rules.
     normalize();
-    suppressSubmit = true;
-    setTimeout(() => { suppressSubmit = false; }, 0);
   });
   input.addEventListener('input', event => {
     if (!composing && !event.isComposing) normalize();
-  });
-  input.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && (composing || event.isComposing || event.keyCode === 229)) {
-      suppressSubmit = true;
-      setTimeout(() => { suppressSubmit = false; }, 0);
-    }
   });
   // Keep input gestures away from scene/microphone shortcuts without blocking IME.
   for (const type of ['click', 'touchstart', 'touchend', 'pointerdown', 'pointerup', 'keydown', 'keyup']) {
@@ -72,7 +65,8 @@ export function createSearchInput(onSearch) {
   form.addEventListener('submit', event => {
     event.preventDefault();
     event.stopPropagation();
-    if (composing || suppressSubmit || input.disabled) return;
+    // A composing Enter confirms an IME candidate. It must not submit partial text.
+    if (composing || input.disabled) return;
     normalize();
     input.value = input.value.trim();
     if (!input.value) mode = null;
