@@ -16,11 +16,23 @@ letter chooses the language; other scripts, digits and symbols are filtered.
 The language resets after clearing or replacing the entire query. Leading and
 trailing spaces are trimmed on submit; an empty/space-only query returns to 3D.
 
-Composition updates are left untouched. Filtering happens on compositionend and
-ordinary input events, with caret adjustment. A composing submit is ignored, while
+Composition updates are left untouched. Hangul/jamo, composition inputType or a
+composition event defers DOM rewriting for the current edit until submit/blur.
+This also covers unflagged jamo input before compositionstart. Compositionend
+does not rewrite a focused input at a syllable boundary. Invalid or overlong
+Hangul text can remain visible while editing, but is filtered before searching.
+Ordinary English-only edits retain immediate filtering. A composing submit is ignored, while
 the next non-composing Enter submits through the form's single submit handler.
 No native maxlength is applied during composition.
 Input clicks/touches/keys do not bubble into scene/microphone handlers.
+
+Input audit: main.js creates this plain DOM input once (no framework/controlled
+input). beforeinput only resets language state for whole-query replacement and
+never cancels insertion. There are no dedicated paste/change filters, key-based
+character blockers, maxlength, or timer/RAF writes to the input value. Paste goes
+through input and the same final validation. Only submit prevents the default
+form navigation. tests/search-input-browser.cjs covers unflagged Hangul/jamo input
+and composition boundaries; it does not emulate an actual iOS keyboard.
 
 The form uses a thin underline with a 44px input hit area, 16px text to avoid iOS
 focus zoom, safe-area spacing and VisualViewport resize/scroll offsets for the

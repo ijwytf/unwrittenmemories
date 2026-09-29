@@ -211,8 +211,10 @@ async function checkMorph(page, label) {
   const original=await page.evaluate(()=>window.__check.morph());
   const micRequests=await page.evaluate(()=>window.__micRequests);
   await input.fill('memory보은123!');
+  await input.blur();
   assert.equal(await input.inputValue(),'memory');
   await input.fill('나의 기억들');
+  await input.blur();
   assert.equal(await input.inputValue(),'나의 기억');
   await input.fill('heritages');
   assert.equal(await input.inputValue(),'heritage');

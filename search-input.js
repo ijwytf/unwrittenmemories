@@ -1,4 +1,6 @@
 const languageOf = character => /[가-힣]/u.test(character) ? 'ko' : /[a-z]/i.test(character) ? 'en' : null;
+// Includes unfinished modern/compatibility/extended Hangul, not just syllables.
+const hasHangul = value => /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff]/u.test(value);
 
 export function sanitizeSearch(value, preferredMode = null) {
   let mode = preferredMode;
@@ -31,7 +33,7 @@ export function createSearchInput(onSearch) {
   input.disabled = true;
   form.appendChild(input);
   document.body.appendChild(form);
-  let composing = false, mode = null;
+  let composing = false, mode = null, hangulEditing = false;
   const normalize = () => {
     const caret = input.selectionStart ?? input.value.length;
     const prefix = sanitizeSearch(input.value.slice(0, caret), mode).value;
@@ -44,19 +46,36 @@ export function createSearchInput(onSearch) {
   };
   input.addEventListener('beforeinput', () => {
     // Selecting/replacing the whole query starts a fresh language choice.
-    if (!composing && input.selectionStart === 0 && input.selectionEnd === input.value.length) mode = null;
+    if (!composing && input.selectionStart === 0 && input.selectionEnd === input.value.length) {
+      mode = null;
+      hangulEditing = false;
+    }
   });
   input.addEventListener('compositionstart', () => {
     if (input.selectionStart === 0 && input.selectionEnd === input.value.length) mode = null;
     composing = true;
+    hangulEditing = true;
   });
+  input.addEventListener('compositionupdate', () => { hangulEditing = true; });
   input.addEventListener('compositionend', () => {
     composing = false;
-    // The committed value is the first safe time to enforce query rules.
-    normalize();
+    // Do not rewrite the DOM at syllable boundaries: a following input may still
+    // belong to the keyboard's ongoing word edit. Validate on submit/blur instead.
+    if (document.activeElement !== input) normalize();
   });
   input.addEventListener('input', event => {
-    if (!composing && !event.isComposing) normalize();
+    if (composing || event.isComposing || /Composition/i.test(event.inputType || '')
+      || hasHangul(input.value) || hasHangul(event.data || '')) hangulEditing = true;
+    // Some keyboard edits carry neither composition events nor isComposing.
+    // Preserve their Hangul/jamo and caret until an explicit commit boundary.
+    if (!composing && !event.isComposing && !hangulEditing) normalize();
+    if (!input.value && !composing && !event.isComposing) {
+      mode = null;
+      hangulEditing = false;
+    }
+  });
+  input.addEventListener('blur', () => {
+    if (!composing) { normalize(); hangulEditing = false; }
   });
   // Keep input gestures away from scene/microphone shortcuts without blocking IME.
   for (const type of ['click', 'touchstart', 'touchend', 'pointerdown', 'pointerup', 'keydown', 'keyup']) {
@@ -68,6 +87,7 @@ export function createSearchInput(onSearch) {
     // A composing Enter confirms an IME candidate. It must not submit partial text.
     if (composing || input.disabled) return;
     normalize();
+    hangulEditing = false;
     input.value = input.value.trim();
     if (!input.value) mode = null;
     onSearch(input.value);
