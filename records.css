@@ -1,0 +1,73 @@
+#record-point {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: white;
+  z-index: 3;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+#record-point[data-mobile="true"] { width: 44px; height: 44px; }
+#record-point:focus-visible { outline: 1px solid white; outline-offset: 2px; }
+#record-note {
+  position: fixed;
+  z-index: 4;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  color: #000;
+  font-family: Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  transform: scale(0.012);
+  opacity: 0;
+  transition: transform 560ms cubic-bezier(.22,.7,.22,1), opacity 420ms ease;
+}
+#record-note.is-open { transform: scale(1); opacity: 1; }
+#record-note.is-closing { transition-delay: 120ms; }
+#record-note[hidden], #record-point[hidden],
+body.credits-open #record-note, body.credits-open #record-point { display: none; }
+.record-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  padding: 44px clamp(24px, 3vw, 44px) 36px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  overflow-wrap: anywhere;
+}
+.is-open .record-scroll { opacity: 1; transition: opacity 280ms ease 200ms; }
+.record-region { font-size: 12px; line-height: 1.6; margin: 0 0 18px; }
+#record-title { font-size: clamp(18px, 1.5vw, 23px); font-weight: 700; line-height: 1.55; margin: 0 0 24px; }
+.record-content { font-size: 15px; font-weight: 400; line-height: 1.85; }
+.record-content p { margin: 0 0 .85em; text-indent: 1em; white-space: pre-wrap; }
+.record-content p:empty { min-height: 1em; }
+.record-content p:last-child { margin-bottom: 0; }
+#record-close {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: #fff;
+  cursor: pointer;
+  opacity: 0;
+  touch-action: manipulation;
+}
+#record-close::after { content: ""; display: block; width: 9px; height: 9px; margin: auto; border-radius: 50%; background: black; }
+.is-open #record-close { opacity: 1; transition: opacity 240ms ease 280ms; }
+#record-close:focus-visible { outline: 1px solid black; outline-offset: -8px; }
+@media (prefers-reduced-motion: reduce) {
+  #record-note, #record-note.is-closing, .is-open .record-scroll, .is-open #record-close { transition-duration: 1ms; transition-delay: 0ms; }
+}

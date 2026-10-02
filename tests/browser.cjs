@@ -14,6 +14,32 @@ const current = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 
 const probe = `
 window.__check = {
+  glowContrast: () => {
+    pauseAnimation();
+    const point=hiddenRecords.screenPosition(), selected=hiddenRecords.selected;
+    const gl=renderer.getContext(), rect=renderer.domElement.getBoundingClientRect();
+    const ratio=renderer.domElement.width/rect.width;
+    const x=Math.floor((point.x-rect.left)*ratio)-6;
+    const y=Math.floor(renderer.domElement.height-(point.y-rect.top)*ratio)-6;
+    const pixels=new Uint8Array(12*12*4);
+    const measure=material=>{
+      selected.cloud.material=material;
+      renderer.setRenderTarget(null);
+      renderer.render(scene,camera);
+      gl.readPixels(x,y,12,12,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+      let white=0;
+      for(let i=0;i<pixels.length;i+=4) if(pixels[i]>245&&pixels[i+1]>245&&pixels[i+2]>245)white++;
+      return white;
+    };
+    const normal=measure(hiddenRecords.active.original), glow=measure(hiddenRecords.active.material);
+    startAnimation();
+    return {normal,glow};
+  },
+  record: () => typeof hiddenRecords === 'undefined' ? null : ({
+    title:hiddenRecords.record?.title, record:hiddenRecords.record,
+    selected:hiddenRecords.selected?.index, screen:hiddenRecords.screenPosition(),
+    materialActive:hiddenRecords.selected?.cloud.material===hiddenRecords.active?.material
+  }),
   microphone: () => ({
     state:document.querySelector('#microphone-controls').dataset.state,
     pending:microphonePending,context:audioContext?.state,
@@ -146,7 +172,7 @@ const server = http.createServer((req,res)=>{
   if(!file.startsWith(root+path.sep)){res.writeHead(403).end();return}
   fs.stat(file,(error,stat)=>{
     if(error||!stat.isFile()){res.writeHead(404).end();return}
-    const type={'.html':'text/html','.js':'text/javascript','.glb':'model/gltf-binary'}[path.extname(file)];
+    const type={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.glb':'model/gltf-binary'}[path.extname(file)];
     res.writeHead(200,{'Content-Type':type||'application/octet-stream','Content-Length':stat.size});
     fs.createReadStream(file).pipe(res);
   });
@@ -197,7 +223,10 @@ async function open(browser, url, mobile, source=current, audio='tone') {
   },audio);
   await page.route('**/main.js',route=>route.fulfill({contentType:'text/javascript',body:instrument(source)}));
   await page.goto(url);
-  await page.waitForFunction(()=>window.__check?.snapshot().ready,null,{timeout:90000});
+  await page.waitForFunction(()=>window.__check?.snapshot().ready,null,{timeout:90000}).catch(async error=>{
+    console.error('Load diagnostics',errors,await page.locator('body').innerText());
+    throw error;
+  });
   await page.waitForTimeout(200);
   assert.deepEqual(errors,[],`load errors: ${errors.join('\n')}`);
   return {context,page,errors};
@@ -293,11 +322,140 @@ async function checkMorph(page, label) {
   console.log(`PASS ${label} all-cloud text morph, audio, repeated return, reversal and immutable originals`);
 }
 
+async function checkRecords(page, label) {
+  const before = await page.evaluate(()=>window.__check.snapshot());
+  const input = page.locator('#point-search-input');
+  const submit = async word => { await input.fill(word); await input.press('Enter'); };
+  const ready = async () => {
+    await page.waitForFunction(()=>window.__check.record().materialActive && !document.querySelector('#record-point').hidden);
+  };
+  const openNote = async () => {
+    const point = await page.evaluate(()=>window.__check.record().screen);
+    if (label==='mobile') await page.touchscreen.tap(point.x,point.y);
+    else await page.mouse.click(point.x,point.y);
+    await page.waitForFunction(()=>document.querySelector('#record-note').classList.contains('is-open'));
+    await page.waitForTimeout(650);
+  };
+  const checkBounds = async () => {
+    const bounds = await page.locator('#record-note').boundingBox();
+    // Bounding boxes are CSS coordinates, also when mobile emulation auto-zooms.
+    const view=await page.evaluate(()=>({width:visualViewport.width,height:visualViewport.height,x:visualViewport.offsetLeft,y:visualViewport.offsetTop,scale:visualViewport.scale}));
+    const inside=bounds.x>=view.x && bounds.y>=view.y && bounds.x+bounds.width<=view.x+view.width+1 && bounds.y+bounds.height<=view.y+view.height+1;
+    if(!inside) await page.screenshot({path:path.join(artifacts,`${label}-record-bounds-failed.png`)});
+    assert.ok(inside,JSON.stringify({bounds,view}));
+    assert.ok(bounds.height<=view.height*.69);
+    assert.ok(bounds.width<=view.width*.88);
+  };
+  await page.evaluate(()=>{if(window.__tone?.gain)window.__tone.gain.gain.value=0});
+  await submit('어업');
+  await ready();
+  const first = await page.evaluate(()=>window.__check.record());
+  assert.ok(first.record.keywords.includes('어업'));
+  const contrast=await page.evaluate(()=>window.__check.glowContrast());
+  assert.ok(contrast.glow>contrast.normal,`selected point must visibly glow: ${JSON.stringify(contrast)}`);
+  await page.screenshot({path:path.join(artifacts,`${label}-record-point.png`)});
+  await openNote();
+  assert.equal(await page.locator('#record-title').textContent(),first.title);
+  assert.equal(await page.locator('.record-region').textContent(),first.record.region);
+  const paragraphs = await page.locator('.record-content p').allTextContents();
+  assert.deepEqual(paragraphs,first.record.content.split(/\r\n|\r|\n/));
+  await checkBounds();
+  await page.screenshot({path:path.join(artifacts,`${label}-record.png`)});
+  await page.locator('#record-close').click();
+  await page.waitForFunction(()=>document.querySelector('#record-note').hidden);
+  assert.equal(await page.evaluate(()=>window.__check.morph().word),'어업');
+  await openNote();
+  assert.equal(await page.locator('#record-title').textContent(),first.title,'reopening a session must preserve its record');
+  await submit('어업'); // New search safely removes even an open paper.
+  await ready();
+  assert.equal(await page.locator('#record-note').evaluate(el=>el.hidden),true);
+  assert.notEqual(await page.evaluate(()=>window.__check.record().title),first.title);
+  await submit('어촌계');
+  await ready();
+  assert.ok(await page.evaluate(()=>window.__check.record().record.keywords.includes('어촌계')));
+  await openNote();
+  const scrolled = await page.locator('.record-scroll').evaluate(el=>{
+    el.scrollTop=el.scrollHeight;
+    return {top:el.scrollTop,overflow:el.scrollHeight>el.clientHeight};
+  });
+  assert.ok(scrolled.overflow && scrolled.top>0,'long record must scroll internally');
+  await page.locator('#credits-toggle').click();
+  assert.equal(await page.locator('#record-note').evaluate(el=>el.hidden),true);
+  assert.equal(await page.locator('#record-point').isVisible(),false);
+  await page.locator('#gallery-open').click();
+  assert.equal(await page.locator('#record-point').isVisible(),false);
+  await page.locator('#gallery-close').click();
+  await page.locator('#credits-toggle').click();
+  await ready();
+  // Restore portrait for a real mobile paper; then rotate while reading.
+  if(label==='mobile') {
+    await page.setViewportSize({width:390,height:844});
+    // Let the existing 30fps morph loop project targets into the new aspect.
+    await page.waitForTimeout(120);
+  }
+  await openNote();
+  await checkBounds();
+  await page.screenshot({path:path.join(artifacts,`${label}-record-long.png`)});
+  if(label==='mobile') {
+    await page.setViewportSize({width:844,height:390});
+    await page.waitForTimeout(100);
+    await checkBounds();
+  }
+  await submit('memory');
+  await page.waitForFunction(()=>window.__check.morph().word==='memory' && window.__check.morph().progress===1);
+  assert.equal(await page.evaluate(()=>window.__check.record().record),null);
+  assert.equal(await page.locator('#record-point').isVisible(),false);
+  assert.equal(await page.locator('#record-note').isVisible(),false);
+  await submit('');
+  await page.waitForFunction(()=>window.__check.morph().blend===0);
+  assert.equal(await page.evaluate(()=>window.__check.verifyReturn()),0);
+  const after = await page.evaluate(()=>window.__check.snapshot());
+  for(const key of ['count','clouds','effects','passes','camera']) assert.deepEqual(after[key],before[key],`record regression: ${key}`);
+  assert.equal(await page.evaluate(()=>performance.getEntriesByType('resource').filter(r=>r.name.endsWith('/data/records.json')).length),1,'record data should only load once');
+  console.log(`PASS ${label} records: existing vertex, keyword lookup, same-session reopen, new search, bounds, scroll, Credits/Gallery, exact return`);
+}
+
 async function run() {
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const url=`http://127.0.0.1:${server.address().port}`;
   const browser=await chromium.launch({headless:true,channel:'msedge',args:['--autoplay-policy=no-user-gesture-required']});
   try {
+    if(process.argv.includes('--viewport-check')) {
+      for(const [label,source] of [['baseline',baseline],['current',current]]) {
+        const session=await open(browser,url,true,source);
+        await session.page.setViewportSize({width:844,height:390});
+        await session.page.waitForTimeout(200);
+        await session.page.setViewportSize({width:390,height:844});
+        await session.page.waitForTimeout(200);
+        console.log(label,await session.page.evaluate(()=>({inner:innerWidth,client:document.documentElement.clientWidth,visual:visualViewport.width,scale:visualViewport.scale,canvas:document.querySelector('canvas').getBoundingClientRect().width})));
+        await session.context.close();
+      }
+      return;
+    }
+    if (process.argv.includes('--records-only')) {
+      for (const label of process.argv.includes('--mobile-only') ? ['mobile'] : ['desktop','mobile']) {
+        const session = await open(browser,url,label==='mobile');
+        assert.equal(await session.page.evaluate(()=>performance.getEntriesByType('resource').some(r=>r.name.endsWith('/data/records.json'))),false,'initial 3D load must not request record data');
+        await session.page.route('**/data/records.json',async route=>{
+          await new Promise(resolve=>setTimeout(resolve,500));
+          await route.continue();
+        });
+        const input=session.page.locator('#point-search-input');
+        await input.fill('어업'); await input.press('Enter');
+        await input.fill('memory'); await input.press('Enter');
+        await session.page.waitForTimeout(700);
+        assert.equal(await session.page.evaluate(()=>window.__check.record().record),null,'stale async results must not activate a point');
+        if(label==='mobile') {
+          await session.page.setViewportSize({width:844,height:390});
+          await session.page.waitForTimeout(120);
+        }
+        await checkRecords(session.page,label);
+        assert.deepEqual(session.errors,[]);
+        await session.context.close();
+      }
+      console.log('Screenshots:',artifacts);
+      return;
+    }
     const old=await open(browser,url,false,baseline);
     const oldState=await old.page.evaluate(()=>window.__check.snapshot());
     const beforePixels=await old.page.evaluate(()=>window.__check.still());
@@ -348,6 +506,8 @@ async function run() {
     assert.deepEqual(resizedPc.camera,oldState.camera);
     assert.deepEqual(pc.errors,[]);
     await checkMorph(pc.page,'desktop');
+    await checkRecords(pc.page,'desktop');
+    assert.deepEqual(pc.errors,[]);
     await pc.context.close();
     console.log('PASS desktop microphone reacts; repeated clicks create one stream');
 
@@ -501,6 +661,7 @@ async function run() {
       await m.waitForFunction(frame=>window.__check.snapshot().rendered>frame,restored);
     }
     await checkMorph(m,'mobile');
+    await checkRecords(m,'mobile');
     await m.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));
     assert.equal(await m.evaluate(()=>window.__tone.stream.getTracks().every(t=>t.readyState==='ended')),true);
     assert.deepEqual(mobile.errors,[]);

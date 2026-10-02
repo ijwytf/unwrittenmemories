@@ -9,6 +9,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { selectQuality, pixelRatioFor, pointCountsFor } from './quality.js';
 import { TextMorph } from './text-morph.js';
 import { createSearchInput } from './search-input.js';
+import { RecordEasterEgg } from './record-easter-egg.js';
 
 const quality = selectQuality();
 const debug = new URLSearchParams(location.search).has('debug');
@@ -167,10 +168,12 @@ const loader = new GLTFLoader();
 let pointCloudGroup = null;
 const pointClouds = [];
 let textMorph = null;
+const hiddenRecords = new RecordEasterEgg(camera, renderer, quality);
 const searchInput = createSearchInput(word => {
   if (!textMorph) return;
   try {
     textMorph.search(word);
+    hiddenRecords.search(word, textMorph);
   } catch (error) {
     showStatus(error.message);
   }
@@ -1059,6 +1062,7 @@ positions[i3 + 2] =
   }
 
   afterimagePass.uniforms.damp.value = Math.pow(0.90, frameScale);
+  hiddenRecords.update(time);
   composer.render(delta);
   renderedFrames++;
 }
