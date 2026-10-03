@@ -16,6 +16,12 @@ export function buildKeywordIndex(records) {
 export class RecordLibrary {
   constructor(records, random = Math.random) {
     this.index = buildKeywordIndex(records);
+    this.regions = new Map();
+    for (const record of records) {
+      if (!this.regions.has(record.region)) this.regions.set(record.region, []);
+      this.regions.get(record.region).push(record);
+    }
+    this.regionCycles = new Map();
     this.cycles = new Map();
     this.random = random;
   }
@@ -26,9 +32,17 @@ export class RecordLibrary {
 
   selectRecordForSearch(keyword) {
     const key = keyOf(keyword), candidates = this.getRecordsForKeyword(key);
+    return this.selectFromCandidates(key, candidates, this.cycles);
+  }
+
+  selectRecordForRegion(region) {
+    return this.selectFromCandidates(region, this.regions.get(region) || [], this.regionCycles);
+  }
+
+  selectFromCandidates(key, candidates, cycles) {
     if (!candidates.length) return null;
-    let cycle = this.cycles.get(key);
-    if (!cycle) { cycle = { remaining: [], last: null }; this.cycles.set(key, cycle); }
+    let cycle = cycles.get(key);
+    if (!cycle) { cycle = { remaining: [], last: null }; cycles.set(key, cycle); }
     if (!cycle.remaining.length) {
       cycle.remaining = [...candidates];
       for (let i = cycle.remaining.length - 1; i > 0; i--) {

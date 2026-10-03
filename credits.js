@@ -1,8 +1,15 @@
 import { galleryRegions } from './gallery-data.js';
+import { createCreditsPopup } from './credits-popup.js';
+import { MemoryFragments } from './memory-fragments.js';
 
 const toggle = document.querySelector('#credits-toggle');
 const credits = document.querySelector('#credits');
-const creditsContent = document.querySelector('#credits-content');
+const creditsContent = document.querySelector('#intro-content');
+const fragmentsPanel = document.querySelector('#memory-fragments');
+const fragmentsOpenButton = document.querySelector('#fragments-open');
+const fragmentsCloseButton = document.querySelector('#fragments-close');
+const creditsPopup = createCreditsPopup();
+const fragments = new MemoryFragments(fragmentsPanel);
 const galleryOpenButton = document.querySelector('#gallery-open');
 const galleryCloseButton = document.querySelector('#gallery-close');
 const galleryPanel = document.querySelector('#gallery-panel');
@@ -69,6 +76,7 @@ function movePhoto(direction) {
 }
 
 function setGalleryOpen(open) {
+  if (open) creditsPopup.dismiss();
   document.body.classList.toggle('gallery-open', open);
   creditsContent.setAttribute('aria-hidden', String(open));
   creditsContent.inert = open;
@@ -93,11 +101,33 @@ function setGalleryOpen(open) {
   }
 }
 
+function setFragmentsOpen(open) {
+  if (open) creditsPopup.dismiss();
+  document.body.classList.toggle('fragments-open', open);
+  fragmentsPanel.setAttribute('aria-hidden', String(!open));
+  fragmentsPanel.inert = !open;
+  fragmentsCloseButton.inert = !open;
+  creditsContent.inert = open;
+  creditsContent.setAttribute('aria-hidden', String(open));
+  toggle.inert = open;
+  if (open) {
+    fragments.open();
+    fragmentsCloseButton.focus({ preventScroll: true });
+  } else {
+    fragments.close();
+    if (document.body.classList.contains('credits-open')) fragmentsOpenButton.focus({ preventScroll: true });
+  }
+}
+
 function setCreditsOpen(open) {
   document.body.classList.toggle('credits-open', open);
-  if (!open) setGalleryOpen(false);
+  if (!open) {
+    creditsPopup.dismiss();
+    setFragmentsOpen(false);
+    setGalleryOpen(false);
+  }
   toggle.setAttribute('aria-expanded', String(open));
-  toggle.setAttribute('aria-label', open ? 'Credits 닫기' : 'Credits 열기');
+  toggle.setAttribute('aria-label', open ? '메인 화면으로 돌아가기' : '소개 화면 열기');
   credits.setAttribute('aria-hidden', String(!open));
   credits.inert = !open;
   if (open) credits.scrollTop = 0;
@@ -116,6 +146,8 @@ toggle.addEventListener('touchend', stopSceneInput, { passive: true });
 galleryImage.addEventListener('load', () => galleryImage.classList.add('is-loaded'));
 galleryOpenButton.addEventListener('click', () => setGalleryOpen(true));
 galleryCloseButton.addEventListener('click', () => setGalleryOpen(false));
+fragmentsOpenButton.addEventListener('click', () => setFragmentsOpen(true));
+fragmentsCloseButton.addEventListener('click', () => setFragmentsOpen(false));
 galleryPrevious.addEventListener('click', () => movePhoto(-1));
 galleryNext.addEventListener('click', () => movePhoto(1));
 
@@ -141,6 +173,11 @@ credits.addEventListener('touchend', stopSceneInput, { passive: true });
 
 document.addEventListener('keydown', event => {
   if (!document.body.classList.contains('credits-open')) return;
+  if (document.body.classList.contains('credits-popup-open')) return;
+  if (document.body.classList.contains('fragments-open')) {
+    if (event.key === 'Escape') setFragmentsOpen(false);
+    return;
+  }
   if (document.body.classList.contains('gallery-open')) {
     if (event.key === 'ArrowLeft') movePhoto(-1);
     if (event.key === 'ArrowRight') movePhoto(1);

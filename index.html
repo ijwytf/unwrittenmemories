@@ -453,6 +453,7 @@
     #point-search-input:disabled { opacity: 0.35; }
     body.credits-open #point-search { visibility: hidden; pointer-events: none; }
   </style>
+  <link rel="stylesheet" href="./navigation.css">
 
   <script type="importmap">
   {
@@ -468,13 +469,30 @@
   <button
     id="credits-toggle"
     type="button"
-    aria-label="Credits 열기"
+    aria-label="소개 화면 열기"
     aria-controls="credits"
     aria-expanded="false"
   ></button>
 
   <aside id="credits" aria-hidden="true" inert>
-    <div id="credits-content">
+    <div id="intro-content">
+      <div class="intro-copy">
+        <h1>쓰여지지 않은 마을, 쓰여지지 않은 기억들</h1>
+        <div class="intro-info">
+          <p>※ 이 웹사이트는 2026 국가유산청 K-무형유산 지식자원 기초조사의 일환으로 제작되었습니다.</p>
+          <p>ⓒ 2026 K-무형유산 지식자원 기초조사 - 충북대학교 팀</p>
+        </div>
+        <a class="intro-instagram" href="https://www.instagram.com/newlog.saelog_cb/" target="_blank" rel="noopener noreferrer">instagram @newlog.saelog_cb</a>
+      </div>
+      <button id="credits-open" type="button" aria-label="Credits 열기" aria-controls="credits-dialog" aria-expanded="false"></button>
+      <button id="gallery-open" class="credits-arrow" type="button" aria-label="사진첩 열기">사진첩 <span aria-hidden="true">→</span></button>
+      <button id="fragments-open" class="intro-nav" type="button" aria-controls="memory-fragments">↓ 기억의 조각들</button>
+    </div>
+
+    <section id="credits-dialog" role="dialog" aria-modal="true" aria-label="Credits" hidden inert>
+      <div id="credits-paper">
+        <button id="credits-close" class="paper-close" type="button" aria-label="Credits 닫기"></button>
+        <div id="credits-content" tabindex="0">
       <div class="credits-group">
         <p class="credits-line">"Big tree"</p>
         <p class="credits-line credits-source">by Simon Laisné(Sketchfab)</p>
@@ -491,13 +509,9 @@
         <p class="credits-line credits-source">by 국가유산청</p>
       </div>
 
-      <div class="credits-info">
-        <p class="credits-line">※ 이 웹사이트는 2026 국가유산청 K-무형유산 지식자원 기초조사의 일환으로 제작되었습니다.</p>
-        <p class="credits-line">ⓒ 2026 K-무형유산 지식자원 기초조사 - 충북대학교 팀</p>
+        </div>
       </div>
-    </div>
-
-    <button id="gallery-open" class="credits-arrow" type="button" aria-label="Gallery 열기">→</button>
+    </section>
 
     <section id="gallery-panel" aria-label="Gallery" aria-hidden="true" inert>
       <div class="gallery-layout">
@@ -523,7 +537,13 @@
       </div>
     </section>
 
-    <button id="gallery-close" class="credits-arrow" type="button" aria-label="Credits로 돌아가기">←</button>
+    <button id="gallery-close" class="credits-arrow" type="button" aria-label="소개 화면으로 돌아가기">←</button>
+
+    <section id="memory-fragments" aria-label="기억의 조각들" aria-hidden="true" inert>
+      <p id="fragments-status" role="status" hidden></p>
+      <div id="fragment-rows"></div>
+    </section>
+    <button id="fragments-close" type="button" aria-label="소개 화면으로 돌아가기" inert>↑</button>
   </aside>
 
   <script type="module" src="./credits.js"></script>

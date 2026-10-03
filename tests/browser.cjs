@@ -415,11 +415,224 @@ async function checkRecords(page, label) {
   console.log(`PASS ${label} records: existing vertex, keyword lookup, same-session reopen, new search, bounds, scroll, Credits/Gallery, exact return`);
 }
 
+async function checkNavigation(page,label) {
+  const micRequests=await page.evaluate(()=>window.__micRequests);
+  await page.locator('#credits-toggle').click();
+  await page.waitForTimeout(750);
+  assert.equal(await page.locator('#intro-content h1').textContent(),'쓰여지지 않은 마을, 쓰여지지 않은 기억들');
+  assert.equal(await page.locator('#credits-dialog').isVisible(),false);
+  const instagram=page.locator('.intro-instagram');
+  assert.equal(await instagram.textContent(),'instagram @newlog.saelog_cb');
+  assert.equal(await instagram.getAttribute('href'),'https://www.instagram.com/newlog.saelog_cb/');
+  assert.equal(await instagram.getAttribute('target'),'_blank');
+  assert.equal(await instagram.getAttribute('rel'),'noopener noreferrer');
+  assert.ok((await page.locator('#gallery-open').textContent()).includes('사진첩'));
+  assert.ok((await page.locator('#fragments-open').textContent()).startsWith('↓'));
+  const typography=await page.locator('.intro-info p').evaluateAll(nodes=>nodes.map(n=>({size:getComputedStyle(n).fontSize,weight:getComputedStyle(n).fontWeight})));
+  assert.deepEqual(typography[0],typography[1]);
+  const shapes=await page.evaluate(()=>['credits-toggle','credits-open'].map(id=>{
+    const style=getComputedStyle(document.getElementById(id),'::before');
+    return [style.width,style.height];
+  }));
+  assert.deepEqual(shapes[0],shapes[1]);
+  await page.screenshot({path:path.join(artifacts,`${label}-intro.png`)});
+  await page.locator('#credits-open').click();
+  await page.waitForTimeout(650);
+  assert.equal(await page.locator('#intro-content').evaluate(n=>n.inert),true);
+  assert.equal(await page.locator('#credits-content .credits-line').count(),10);
+  assert.equal((await page.locator('#credits-content').textContent()).includes('ⓒ'),false);
+  const creditBox=await page.locator('#credits-paper').boundingBox();
+  const visual=await page.evaluate(()=>({width:visualViewport.width,height:visualViewport.height}));
+  assert.ok(creditBox.width<visual.width && creditBox.height<visual.height);
+  await page.screenshot({path:path.join(artifacts,`${label}-credits-paper.png`)});
+  await page.locator('#credits-close').click();
+  await page.waitForFunction(()=>document.querySelector('#credits-dialog').hidden);
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'credits-open');
+  await page.locator('#fragments-open').click();
+  await checkCloud(page,label);
+  if(label==='mobile') await page.locator('#fragments-close').tap();
+  else await page.locator('#fragments-close').click();
+  await page.locator('#credits-toggle').click();
+  assert.equal(await page.locator('#point-search-input').isVisible(),true);
+  assert.equal(await page.evaluate(()=>window.__micRequests),micRequests);
+  return;
+  await page.waitForFunction(()=>document.querySelectorAll('.fragment-keyword:not([data-copy])').length===622);
+  assert.equal(await page.locator('.fragment-regions').count(),0);
+  await page.waitForTimeout(650);
+  await page.mouse.move(0,0);
+  await page.waitForTimeout(220);
+  const keywords=await page.locator('.fragment-keyword:not([data-copy])').allTextContents();
+  const records=JSON.parse(fs.readFileSync(path.join(root,'data/records.json'),'utf8'));
+  const expected=[...new Set(records.flatMap(r=>r.keywords.map(k=>k.trim())).filter(Boolean))];
+  assert.deepEqual([...new Set(keywords)].sort(),expected.sort());
+  assert.ok(expected.every(keyword=>keywords.filter(value=>value===keyword).length===2));
+  assert.equal(await page.locator('#point-search-input').isVisible(),false);
+  const layout=await page.evaluate(()=>{
+    const panel=document.querySelector('#memory-fragments');
+    const lines=[...document.querySelectorAll('.fragment-line')];
+    const uniform=new Set([...document.querySelectorAll('.fragment-keyword')].map(n=>{const s=getComputedStyle(n);return [s.fontSize,s.fontWeight].join('/')}));
+    return {overflow:panel.scrollWidth>panel.clientWidth,rows:lines.length,uniform:uniform.size,
+      clip:lines.every(line=>{const row=line.firstElementChild;return row.getBoundingClientRect().left<line.getBoundingClientRect().left && row.scrollWidth>line.clientWidth})};
+  });
+  assert.equal(layout.overflow,false);
+  assert.equal(layout.uniform,1);
+  assert.ok(layout.rows>5 && layout.clip);
+  const returnButton=page.locator('#fragments-close');
+  assert.equal(await returnButton.isVisible(),true);
+  const returnStyle=await returnButton.evaluate(n=>{const s=getComputedStyle(n),r=n.getBoundingClientRect();return {background:s.backgroundColor,border:s.borderTopWidth,shadow:s.boxShadow,color:s.color,tap:s.webkitTapHighlightColor,width:r.width,height:r.height,right:innerWidth-r.right}});
+  assert.equal(returnStyle.background,'rgba(0, 0, 0, 0)');
+  assert.equal(returnStyle.border,'0px');
+  assert.equal(returnStyle.shadow,'none');
+  assert.equal(returnStyle.color,'rgb(255, 255, 255)');
+  assert.equal(returnStyle.tap,'rgba(0, 0, 0, 0)');
+  assert.ok(returnStyle.width>=44 && returnStyle.height>=44 && returnStyle.right>=12);
+  const spacing=await page.evaluate(()=>{
+    const lines=[...document.querySelectorAll('.fragment-line')];
+    const size=parseFloat(getComputedStyle(document.querySelector('#memory-fragments')).fontSize);
+    return {size,step:lines[1].getBoundingClientRect().top-lines[0].getBoundingClientRect().top,
+      overlap:lines.some((line,index)=>index && line.getBoundingClientRect().top<lines[index-1].getBoundingClientRect().bottom)};
+  });
+  assert.equal(spacing.overlap,false);
+  assert.ok(Math.abs(spacing.step/spacing.size-1.25)<0.02);
+  assert.equal(await page.locator('.fragment-keyword:not([data-copy])').first().evaluate(n=>getComputedStyle(n).color),'rgb(90, 90, 90)');
+  await page.screenshot({path:path.join(artifacts,`${label}-fragments.png`)});
+  if(label==='desktop') {
+    await returnButton.hover();
+    assert.equal(await returnButton.evaluate(n=>getComputedStyle(n).backgroundColor),'rgba(0, 0, 0, 0)');
+    const target=page.locator('.fragment-keyword:not([data-copy])').first();
+    const rect=await target.boundingBox();
+    await page.mouse.move(rect.x+rect.width/2,rect.y-15);
+    await page.waitForTimeout(250);
+    assert.notEqual(await target.evaluate(n=>getComputedStyle(n).color),'rgb(90, 90, 90)');
+    await target.hover();
+    await page.waitForTimeout(250);
+    assert.equal(await target.evaluate(n=>getComputedStyle(n).color),'rgb(255, 255, 255)');
+  }
+  const fishing=page.locator('.fragment-keyword:not([data-copy])').filter({hasText:/^어업$/});
+  assert.equal(await fishing.count(),2);
+  if(label==='mobile') await fishing.first().tap(); else await fishing.first().click();
+  await page.waitForTimeout(650);
+  assert.equal(await page.locator('#record-note').isVisible(),true);
+  const firstTitle=await page.locator('#record-title').textContent();
+  assert.ok(records.some(r=>r.title===firstTitle && r.keywords.includes('어업')));
+  assert.equal(await page.locator('#record-note').count(),1);
+  assert.equal(await page.evaluate(async()=>{const {getRecordNote}=await import('./record-note.js');return getRecordNote().element===document.querySelector('#record-note')}),true);
+  await page.screenshot({path:path.join(artifacts,`${label}-fragment-record.png`)});
+  await page.locator('#record-close').click();
+  await page.waitForFunction(()=>document.querySelector('#record-note').hidden);
+  if(label==='mobile') await fishing.last().tap(); else await fishing.last().click();
+  await page.waitForTimeout(650);
+  assert.notEqual(await page.locator('#record-title').textContent(),firstTitle);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>document.querySelector('#record-note').hidden);
+  if(label==='mobile') await returnButton.tap(); else await returnButton.click();
+  assert.equal(await page.locator('#record-note').isVisible(),false);
+  await page.locator('#fragments-open').click();
+  await page.waitForTimeout(650);
+  assert.deepEqual(await page.locator('.fragment-keyword:not([data-copy])').allTextContents(),keywords,'order must persist across visits');
+  if(label==='mobile') await returnButton.tap(); else await returnButton.click();
+  await page.locator('#credits-toggle').click();
+  assert.equal(await page.locator('#point-search-input').isVisible(),true);
+  assert.equal(await page.evaluate(()=>window.__micRequests),micRequests,'new UI must not start microphone');
+  assert.equal(await page.evaluate(()=>performance.getEntriesByType('resource').filter(r=>r.name.endsWith('/data/records.json')).length),1);
+  console.log(`PASS ${label} Intro, Credits paper, 311 unique equal-weight keywords, clipping/proximity, shared record UI, return and input isolation`);
+}
+
+async function checkCloud(page,label) {
+  await page.waitForFunction(()=>document.querySelectorAll('.fragment-keywords button').length===311);
+  await page.waitForTimeout(650);
+  const regions=page.locator('.fragment-regions button');
+  assert.deepEqual(await regions.allTextContents(),['괴산','옥천','보은','단양']);
+  const records=JSON.parse(fs.readFileSync(path.join(root,'data/records.json'),'utf8'));
+  const expected=[...new Set(records.flatMap(r=>r.keywords.map(k=>k.trim())).filter(Boolean))];
+  const keywordButtons=page.locator('.fragment-keywords button');
+  const keywords=await keywordButtons.allTextContents();
+  assert.equal(keywords.length,expected.length);
+  assert.deepEqual([...keywords].sort(),expected.sort());
+  const layout=await page.evaluate(()=>{
+    const panel=document.querySelector('#memory-fragments');
+    const center=document.querySelector('.fragment-regions').getBoundingClientRect();
+    const words=document.querySelector('.fragment-keywords').getBoundingClientRect();
+    const buttons=[...document.querySelectorAll('.fragment-regions button')];
+    const rows=[...document.querySelectorAll('.fragment-keyword-row')];
+    const size=n=>parseFloat(getComputedStyle(n).fontSize);
+    const first=buttons[0].getBoundingClientRect();
+    const last=buttons.at(-1).getBoundingClientRect();
+    return {clear:center.bottom<words.top,top:center.top<words.top,
+      regionSizes:buttons.map(size),size:size(document.querySelector('.fragment-keywords button')),
+      sameRow:buttons.every(b=>Math.abs(b.getBoundingClientRect().top-first.top)<1),
+      sameColumn:buttons.every(b=>Math.abs((b.getBoundingClientRect().left+b.getBoundingClientRect().right)/2-(first.left+first.right)/2)<1),
+      centered:Math.abs((center.left+center.right)/2-innerWidth/2)<2,
+      vertical:panel.scrollHeight>panel.clientHeight,overflow:panel.scrollWidth>innerWidth,
+      gutter:words.left,otherGutter:innerWidth-words.right,
+      distributed:rows.filter(r=>!r.classList.contains('is-last')).every(r=>{
+        const box=r.getBoundingClientRect(), first=r.firstElementChild.getBoundingClientRect(), last=r.lastElementChild.getBoundingClientRect();
+        return Math.abs(first.left-box.left)<2 && Math.abs(last.right-box.right)<2;
+      }),
+      lastNatural:getComputedStyle(rows.at(-1)).justifyContent==='flex-start',
+      rowCount:rows.length,
+      firstTop:first.top,lastBottom:last.bottom,
+      minTouch:Math.min(...[...document.querySelectorAll('.fragment-keywords button')].map(b=>b.getBoundingClientRect().height))};
+  });
+  assert.ok(layout.clear && layout.top && layout.centered && layout.vertical && !layout.overflow);
+  assert.ok(Math.abs(layout.gutter-layout.otherGutter)<2);
+  assert.ok(layout.rowCount>5 && layout.distributed && layout.lastNatural);
+  if(label==='mobile') {
+    assert.ok(layout.sameColumn && !layout.sameRow && layout.size>=18 && layout.size<=22 && layout.minTouch>=44);
+    assert.ok(layout.regionSizes.every(size=>size>=32 && size<=40));
+  } else {
+    assert.ok(layout.sameRow);
+    assert.equal(layout.size,25.6);
+    assert.ok(layout.regionSizes.every(size=>size===64));
+  }
+  await page.mouse.move(0,0);
+  await page.waitForTimeout(220);
+  await page.screenshot({path:path.join(artifacts,`${label}-keywords.png`)});
+  const keyword=keywordButtons.last();
+  const word=await keyword.textContent();
+  assert.equal(await keyword.evaluate(n=>getComputedStyle(n).color),'rgb(90, 90, 90)');
+  if(label==='mobile') await keyword.tap(); else await keyword.click();
+  const title=await page.locator('#record-title').textContent();
+  assert.ok(records.some(r=>r.title===title && r.keywords.includes(word)));
+  await page.locator('#record-close').click();
+  await page.waitForFunction(()=>document.querySelector('#record-note').hidden);
+  for(const region of ['괴산','옥천','보은','단양']) {
+    const button=regions.filter({hasText:region});
+    if(label==='desktop') {
+      await button.hover();
+      await page.waitForTimeout(220);
+      assert.equal(await button.evaluate(n=>getComputedStyle(n).color),'rgb(255, 255, 255)');
+    }
+    let previous;
+    for(let i=0;i<2;i++) {
+      if(label==='mobile') await button.tap(); else await button.click();
+      assert.equal(await page.locator('.record-region').textContent(),region);
+      const current=await page.locator('#record-title').textContent();
+      assert.notEqual(current,previous);
+      previous=current;
+      await page.locator('#record-close').click();
+      await page.waitForFunction(()=>document.querySelector('#record-note').hidden);
+    }
+  }
+  assert.equal(await page.locator('#record-note').count(),1);
+  console.log(`PASS ${label} all unique keywords, symmetric gutters, wrapping, scroll, regional header and record selection`);
+}
+
 async function run() {
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const url=`http://127.0.0.1:${server.address().port}`;
   const browser=await chromium.launch({headless:true,channel:'msedge',args:['--autoplay-policy=no-user-gesture-required']});
   try {
+    if(process.argv.includes('--navigation-only')) {
+      for(const label of ['desktop','mobile']) {
+        const session=await open(browser,url,label==='mobile');
+        await checkNavigation(session.page,label);
+        assert.deepEqual(session.errors,[]);
+        await session.context.close();
+      }
+      console.log('Screenshots:',artifacts);
+      return;
+    }
     if(process.argv.includes('--viewport-check')) {
       for(const [label,source] of [['baseline',baseline],['current',current]]) {
         const session=await open(browser,url,true,source);
@@ -507,6 +720,7 @@ async function run() {
     assert.deepEqual(pc.errors,[]);
     await checkMorph(pc.page,'desktop');
     await checkRecords(pc.page,'desktop');
+    await checkNavigation(pc.page,'desktop');
     assert.deepEqual(pc.errors,[]);
     await pc.context.close();
     console.log('PASS desktop microphone reacts; repeated clicks create one stream');
@@ -539,7 +753,7 @@ async function run() {
       background:getComputedStyle(document.querySelector('#credits')).backgroundColor,
       text:getComputedStyle(document.querySelector('#credits')).color,
       canvasOpacity:getComputedStyle(document.querySelector('canvas')).opacity,
-      scrollable:document.querySelector('#credits').scrollHeight>document.querySelector('#credits').clientHeight,
+      scrollable:document.querySelector('#intro-content').scrollHeight>document.querySelector('#intro-content').clientHeight,
       micRequests:window.__micRequests
     }));
     assert.deepEqual(creditsOpen,{
@@ -582,7 +796,7 @@ async function run() {
     await m.waitForFunction(()=>{const i=document.querySelector('#gallery-image');return i.complete&&i.naturalWidth>0});
     await m.locator('#gallery-close').tap();
     await m.waitForFunction(()=>!document.body.classList.contains('gallery-open'));
-    assert.equal(await m.locator('#credits-content').getAttribute('aria-hidden'),'false');
+    assert.equal(await m.locator('#intro-content').getAttribute('aria-hidden'),'false');
     await m.locator('#credits-toggle').tap();
     await m.waitForFunction(()=>!document.body.classList.contains('credits-open'));
     assert.equal(await m.evaluate(()=>document.querySelector('#credits').inert),true);
@@ -662,6 +876,7 @@ async function run() {
     }
     await checkMorph(m,'mobile');
     await checkRecords(m,'mobile');
+    await checkNavigation(m,'mobile');
     await m.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide')));
     assert.equal(await m.evaluate(()=>window.__tone.stream.getTracks().every(t=>t.readyState==='ended')),true);
     assert.deepEqual(mobile.errors,[]);

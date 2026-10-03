@@ -5,6 +5,22 @@ import { RecordLibrary } from '../record-data.js';
 
 const records = JSON.parse(readFileSync(new URL('../data/records.json', import.meta.url)));
 
+test('region selection covers every actual regional record with independent shuffle cycles', () => {
+  const library = new RecordLibrary(records, () => .42);
+  for (const [region, count] of Object.entries({괴산:38, 옥천:36, 보은:26, 단양:69})) {
+    let last;
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const selected = Array.from({length:count}, () => library.selectRecordForRegion(region));
+      assert.equal(new Set(selected).size, count);
+      assert.ok(selected.every(record => record.region === region));
+      assert.notEqual(selected[0], last);
+      last = selected.at(-1);
+    }
+  }
+  assert.equal(library.selectRecordForRegion('없는 지역'), null);
+  assert.equal(library.cycles.size, 0);
+});
+
 test('actual records use exact individual keywords, with no empty/duplicate candidates', () => {
   const library = new RecordLibrary(records);
   assert.equal(records.length, 169);

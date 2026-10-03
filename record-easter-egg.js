@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { loadRecordData } from './record-data.js';
-import { RecordNote } from './record-note.js';
+import { getRecordNote } from './record-note.js';
 
 // Reuses one existing vertex and its live (audio-reactive) position.
 export class RecordEasterEgg {
   constructor(camera, renderer, quality) {
     this.camera = camera;
     this.renderer = renderer;
-    this.note = new RecordNote({ mobile: quality.name === 'mobile' });
+    this.note = getRecordNote({ mobile: quality.name === 'mobile' });
     this.version = 0;
     this.vector = new THREE.Vector3();
     this.materials = new Map();

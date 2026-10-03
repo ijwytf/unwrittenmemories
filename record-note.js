@@ -1,3 +1,9 @@
+// Both entry points share this paper; record selection stays in RecordLibrary.
+let sharedNote;
+export function getRecordNote(options) {
+  return sharedNote ||= new RecordNote(options);
+}
+
 // A non-modal paper: the surrounding artwork/search remain available.
 export class RecordNote {
   constructor({ mobile = false } = {}) {
