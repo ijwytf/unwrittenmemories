@@ -94,7 +94,8 @@ body.fragments-open #record-note[data-context="fragments"]:not([hidden]) { displ
 @media (max-width: 600px) {
   #video-open { z-index: 1; }
   #video-dialog { height: 100vh; height: 100dvh; }
-  #video-frame { width: min(88vw, calc((100dvh - 112px) * 16 / 9)); max-height: calc(100dvh - 112px); }
+  #video-frame { width: min(78vw, 600px, 120vh); width: min(78vw, 600px, 120dvh); height: auto; max-height: none; aspect-ratio: 16 / 9; }
+  #video-player { position: absolute; inset: 0; width: 100%; height: 100%; }
   body.video-open #credits, body.video-open #intro-content { overflow: hidden; }
   #intro-content { padding-left: 24px; padding-right: 24px; padding-top: 92px; padding-bottom: 170px; }
   .intro-copy { padding-top: 24px; padding-right: 0; }
@@ -103,6 +104,10 @@ body.fragments-open #record-note[data-context="fragments"]:not([hidden]) { displ
   #fragments-open { left: 24px; bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px)); }
   #memory-fragments { font-size: clamp(32px, 9vw, 40px); }
   #fragment-rows { --fragment-gap: 14px; }
+}
+@media (min-width: 601px) and (max-width: 900px) and (max-height: 500px) and (pointer: coarse) {
+  #video-frame { width: min(78vw, 600px, 120vh); width: min(78vw, 600px, 120dvh); height: auto; max-height: none; aspect-ratio: 16 / 9; }
+  #video-player { position: absolute; inset: 0; width: 100%; height: 100%; }
 }
 @media (max-height: 500px) {
   .intro-copy { padding-top: 0; }
