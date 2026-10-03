@@ -453,7 +453,7 @@
     #point-search-input:disabled { opacity: 0.35; }
     body.credits-open #point-search { visibility: hidden; pointer-events: none; }
   </style>
-  <link rel="stylesheet" href="./navigation.css">
+  <link rel="stylesheet" href="./navigation.css?v=video-2">
 
   <script type="importmap">
   {
@@ -485,6 +485,7 @@
         <a class="intro-instagram" href="https://www.instagram.com/newlog.saelog_cb/" target="_blank" rel="noopener noreferrer">instagram @newlog.saelog_cb</a>
       </div>
       <button id="credits-open" type="button" aria-label="Credits 열기" aria-controls="credits-dialog" aria-expanded="false"></button>
+      <button id="video-open" type="button" aria-label="영상 보기" aria-controls="video-dialog" aria-expanded="false"></button>
       <button id="gallery-open" class="credits-arrow" type="button" aria-label="사진첩 열기">사진첩 <span aria-hidden="true">→</span></button>
       <button id="fragments-open" class="intro-nav" type="button" aria-controls="memory-fragments">↓ 기억의 조각들</button>
     </div>
@@ -546,7 +547,14 @@
     <button id="fragments-close" type="button" aria-label="소개 화면으로 돌아가기" inert>↑</button>
   </aside>
 
-  <script type="module" src="./credits.js"></script>
+  <section id="video-dialog" role="dialog" aria-modal="true" aria-label="영상" hidden inert>
+    <div id="video-frame">
+      <button id="video-close" type="button" aria-label="영상 닫기">×</button>
+      <div id="video-player"></div>
+    </div>
+  </section>
+
+  <script type="module" src="./credits.js?v=video-1"></script>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 import { galleryRegions } from './gallery-data.js';
 import { createCreditsPopup } from './credits-popup.js';
 import { MemoryFragments } from './memory-fragments.js';
+import { createVideoPopup } from './video-popup.js';
 
 const toggle = document.querySelector('#credits-toggle');
 const credits = document.querySelector('#credits');
@@ -9,6 +10,7 @@ const fragmentsPanel = document.querySelector('#memory-fragments');
 const fragmentsOpenButton = document.querySelector('#fragments-open');
 const fragmentsCloseButton = document.querySelector('#fragments-close');
 const creditsPopup = createCreditsPopup();
+createVideoPopup();
 const fragments = new MemoryFragments(fragmentsPanel);
 const galleryOpenButton = document.querySelector('#gallery-open');
 const galleryCloseButton = document.querySelector('#gallery-close');
