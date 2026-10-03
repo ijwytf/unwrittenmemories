@@ -12,6 +12,7 @@ export function createVideoPopup() {
     player.replaceChildren(); // Removing the iframe stops video and audio playback.
     dialog.hidden = true;
     dialog.inert = true;
+    document.body.classList.remove('video-open');
     intro.inert = false;
     trigger.setAttribute('aria-expanded', 'false');
     trigger.focus({ preventScroll: true });
@@ -28,6 +29,7 @@ export function createVideoPopup() {
     player.appendChild(iframe);
     dialog.hidden = false;
     dialog.inert = false;
+    document.body.classList.add('video-open');
     intro.inert = true;
     trigger.setAttribute('aria-expanded', 'true');
     closeButton.focus({ preventScroll: true });

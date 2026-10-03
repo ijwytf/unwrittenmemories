@@ -1,7 +1,7 @@
 import { galleryRegions } from './gallery-data.js';
 import { createCreditsPopup } from './credits-popup.js';
 import { MemoryFragments } from './memory-fragments.js';
-import { createVideoPopup } from './video-popup.js';
+import { createVideoPopup } from './video-popup.js?v=mobile-1';
 
 const toggle = document.querySelector('#credits-toggle');
 const credits = document.querySelector('#credits');

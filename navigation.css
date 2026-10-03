@@ -92,6 +92,10 @@ body.fragments-open #fragments-close { visibility: visible; pointer-events: auto
 .is-mobile-directory .fragment-keyword { min-width: 44px; min-height: 44px; padding: 8px 6px; }
 body.fragments-open #record-note[data-context="fragments"]:not([hidden]) { display: flex; z-index: 25; }
 @media (max-width: 600px) {
+  #video-open { z-index: 1; }
+  #video-dialog { height: 100vh; height: 100dvh; }
+  #video-frame { width: min(88vw, calc((100dvh - 112px) * 16 / 9)); max-height: calc(100dvh - 112px); }
+  body.video-open #credits, body.video-open #intro-content { overflow: hidden; }
   #intro-content { padding-left: 24px; padding-right: 24px; padding-top: 92px; padding-bottom: 170px; }
   .intro-copy { padding-top: 24px; padding-right: 0; }
   .intro-copy h1 { margin-bottom: 32px; }
